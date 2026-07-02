@@ -40,11 +40,23 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-25.jdk/Contents/Home
 export DOCKER_HOST=unix:///Users/ethanwang/.orbstack/run/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ./gradlew check            # codegen + 编译 + ktlint + detekt + 9 测试(CI 主入口)
+
+./gradlew test --tests "com.gabon.RechargeIdempotencyTest"   # 跑单个测试类(需同样的 Docker 环境变量)
+./gradlew ktlintFormat     # 格式自动修复
+./gradlew jooqCodegen      # 单独重新生成 jOOQ 代码
 ```
+
+环境变量可持久化:`~/.testcontainers.properties` 写 `docker.host=unix:///Users/ethanwang/.orbstack/run/docker.sock`,免每次 export(`JAVA_HOME` 仍需)。
 
 - **本机零服务依赖**:只需 JDK 25 + Gradle Wrapper + Docker。PG/Valkey/S3 mock 一律 Testcontainers,**本机不装** PG/Valkey/Flyway CLI/jOOQ CLI/ffmpeg。
 - jOOQ 代码由 `jooqCodegen` task 生成(启 Testcontainers PG → 跑 Flyway → KotlinGenerator);输出在 `build/generated/jooq`,**禁止手改**。
-- 改 `build.gradle.kts` 里的 codegen 配置或 `src/main/resources/db/migration/` 会触发重新生成。
+- `jooqCodegen` 的 input 是**整个 `build.gradle.kts`** 与 `src/main/resources/db/migration/`:对二者的任何改动(哪怕只调依赖版本)都会重跑 codegen(含起 Testcontainers,约几十秒),属预期行为。
+
+## 测试约定
+
+- 集成测试一律继承 `AbstractPgTest`:单例 PG 容器整个测试 JVM 复用 + `@BeforeEach` truncate 全表;**新增表必须同步加进其 truncate 列表**,否则测试间脏数据。
+- 连接注入当前用 `@DynamicPropertySource`(架构文档 C9 提的 `@ServiceConnection` 是目标形态,骨架尚未采用;迁移后同步更新本节)。
+- ArchUnit 依赖 Gradle 注入的 `archunit.main.classes` 系统属性;脱离 Gradle 直跑(IDE)会导入 0 类、断言空过,**以 `./gradlew check` 结果为准**。
 
 ## 硬规则(多数由 ArchUnit 强制,见 `src/test/.../ArchitectureTest.kt`)
 
