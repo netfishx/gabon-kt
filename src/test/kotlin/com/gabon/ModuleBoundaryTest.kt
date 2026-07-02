@@ -70,6 +70,20 @@ class ModuleBoundaryTest {
             )
 
         private fun pkg(ctx: String) = "com.gabon.$ctx"
+
+        /**
+         * 表本体识别:仅 tables/tables.records 两包;`*Kt`(references 顶层属性持有类)与
+         * `*Path`(KotlinGenerator 关联路径类)不是表本体,返回 null。
+         */
+        private fun tableNameOf(target: JavaClass): String? {
+            val inTables = target.packageName == "com.gabon.jooq.tables"
+            val inRecords = target.packageName == "com.gabon.jooq.tables.records"
+            return if ((!inTables && !inRecords) || target.simpleName.endsWith("Kt")) {
+                null
+            } else {
+                target.simpleName.removeSuffix("Record").removeSuffix("Path")
+            }
+        }
     }
 
     /** 规则 1:任何上下文不得触碰他人 internal(与规则 3 独立断言,报错信息更准) */
@@ -123,6 +137,9 @@ class ModuleBoundaryTest {
     /**
      * 规则 6:业务代码只许访问自己上下文拥有的 jOOQ 表;白名单无主的表直接失败。
      * jooq 包豁免只针对包依赖(规则 2/3 不禁),表所有权在此闭环(spec §4"jooq 豁免的边界")。
+     * 候选依赖三路收集:类级依赖(字段/签名等)+ 方法调用返回类型 + 字段访问类型——
+     * 后两路兜住经 references 顶层属性(字节码 TablesKt.getACCOUNT() 返回 Account)的
+     * 裸参数调用形态(如 dsl.fetchCount(ACCOUNT)),单看类级依赖会漏。
      */
     @Test
     fun `jooq table access is limited to the owning module`() {
@@ -132,14 +149,12 @@ class ModuleBoundaryTest {
                     clazz: JavaClass,
                     events: ConditionEvents,
                 ) {
-                    clazz.directDependenciesFromSelf.forEach { dep ->
-                        val target = dep.targetClass
-                        val inTables = target.packageName == "com.gabon.jooq.tables"
-                        val inRecords = target.packageName == "com.gabon.jooq.tables.records"
-                        if (!inTables && !inRecords) return@forEach
-                        // KotlinGenerator 的路径/引用持有类不是表本体,跳过(表本体命名 = PascalCase 表名)
-                        val tableName = target.simpleName.removeSuffix("Record").removeSuffix("Path")
-                        if (tableName.endsWith("Kt")) return@forEach
+                    val candidates =
+                        clazz.directDependenciesFromSelf.asSequence().map { it.targetClass } +
+                            clazz.methodCallsFromSelf.asSequence().map { it.target.rawReturnType } +
+                            clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
+                    candidates.forEach { target ->
+                        val tableName = tableNameOf(target) ?: return@forEach
                         val owner = TABLE_OWNER[tableName]
                         if (owner == null) {
                             events.add(
@@ -148,7 +163,7 @@ class ModuleBoundaryTest {
                                     "jOOQ 表 $tableName 未在 TABLE_OWNER 登记归属——新迁移必须登记(spec §4 规则 6)",
                                 ),
                             )
-                        } else if (!clazz.packageName.startsWith(owner)) {
+                        } else if (clazz.packageName != owner && !clazz.packageName.startsWith("$owner.")) {
                             events.add(
                                 SimpleConditionEvent.violated(
                                     clazz,
