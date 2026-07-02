@@ -70,6 +70,7 @@ com.gabon
 
 - **reporting 单向**:reporting 只允许依赖各上下文 api,**任何上下文不得依赖 reporting**(防后台查询反向污染业务域)。
 - **jooq 豁免的边界**:`com.gabon.jooq..` 豁免仅表示"import 生成代码不构成跨上下文包依赖",**不绕过表所有权**——任意上下文直接读写他人表(如 content 引用 `ACCOUNT`)会被规则 6 拦下,B4"跨模块只经 api/领域事件"由此闭环。初始白名单:`account`/`ledger_txn`/`ledger_entry` → wallet;`outbox`/`inbox` → platform;`customer`/`admin_user`/`refresh_token` → identity。
+- **规则 6 已知检测边界**:基于字节码依赖分析,**不覆盖 plain SQL 字符串字面量中的表名**(`DSL.field("...")`/`resultQuery("...")` 等拼接表名的写法字节码里无表类引用)。plain SQL 中引用他人上下文的表属人工 review 范围,不得以"规则 6 没报"为合规依据。
 - 既有 4 条断言(jOOQ-only、钱核禁协程、feed 无事务、禁 `@Transactional suspend`)保留,仅更新包匹配;钱核禁协程覆盖 `..wallet..`/`..recharge..`/`..withdraw..` 整上下文。
 
 ## 5. 身份域(identity)
