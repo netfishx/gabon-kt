@@ -87,6 +87,8 @@
 
 **限界上下文**：身份鉴权 · 钱包与账本 · 充值 · 提现出款 · 奖励（任务/签到/VIP） · 内容（视频/评论/点赞/关注/feed） · 媒体流水线 · 内容审核 · 报表后台。每个模块暴露 `api` 包，内部实现放 `internal` 包，跨模块只允许经 `api` + 领域事件；ArchUnit 断言这条。
 
+> **实施决策(2026-07,迁移子项目 1)**:采用方案 A——单 Gradle 模块 + `com.gabon.<context>.{api,internal}` 包边界 + ArchUnit 强制。B(多 Gradle 子项目物理隔离)/ C(Spring Modulith 提前上)都不是当前实现分支,而是架构改案:B 会重做已验证的 jOOQ/codegen/Gradle 构建链;C 违反 Modulith 二期增强的分期。若要改 B/C,必须新 ADR + spike。规则与表所有权白名单见 `src/test/kotlin/com/gabon/ModuleBoundaryTest.kt`;设计全文见 `docs/superpowers/specs/2026-07-02-module-boundaries-identity-design.md`。方向白名单当前含 `content→wallet`(spike 探针保留边:feed 编排经 wallet.api 读余额;内容域正式设计时复审)。
+
 ## B5. 一致性与事件模型（三种异步机制的分工）
 
 文档同时用到三种机制，**必须分清何时用哪个**，否则会重蹈旧版 `tryAutoClaimReward` 那种"同步事务里塞副作用 → rollback-only"的坑：

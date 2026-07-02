@@ -61,12 +61,13 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ## 硬规则(多数由 ArchUnit 强制,见 `src/test/.../ArchitectureTest.kt`)
 
 - **持久层只用 jOOQ**:禁 MyBatis/MyBatis-Plus、JPA/Hibernate、分散的 `JdbcClient`(ArchUnit 断言)。裸 SQL 用 jOOQ plain SQL API。Kotlin 条件用 `.eq()/.ge()` DSL,**禁用 `==`/`>=`**。
-- **协程边界**(见 B5.1):`suspend` 函数**禁带 `@Transactional`**;钱核(`..ledger..`/`..payment..`/`..withdraw..`)阻塞 + `@Transactional` + 虚拟线程,**不依赖 kotlinx.coroutines**(ArchUnit 断言);协程仅用于 feed/外部 IO 编排(结构化并发/超时/取消,不是吞吐手段)。
+- **协程边界**(见 B5.1):`suspend` 函数**禁带 `@Transactional`**;钱核(`..wallet..`/`..recharge..`/`..withdraw..`)阻塞 + `@Transactional` + 虚拟线程,**不依赖 kotlinx.coroutines**(ArchUnit 断言);协程仅用于 feed/外部 IO 编排(结构化并发/超时/取消,不是吞吐手段)。
 - **钱核**:双分录(一笔 txn ≥2 行、Σ=0,延迟约束触发器校验)+ 幂等键 `(biz_type, biz_no)` + 守卫 UPDATE(`WHERE balance>=amount`,0 行即失败)+ 余额投影。**不变量 `balance == Σ ledger` 神圣不可破**;"改余额不写分录"的方法**不得**进钱核 service(守卫探针留测试层)。
 - **outbox / 队列**:PG `SKIP LOCKED` 原子领取;拉取必须含**过期租约重捡**:`(status=ready AND next_run_at<=now) OR (status=in_flight AND lease_until<now)`——否则 worker 崩溃后任务永久卡死。
 - **Flyway 迁移**:只前滚(expand/contract + 补偿迁移),禁自动回滚;versioned 迁移进环境后**不可变**,只能新增;生产 `spring.flyway.clean-disabled=true`。
 - **Boot 4 Flyway 坑**:`flyway-core` 单独在场**不触发**自动迁移,必须用 `spring-boot-starter-flyway` + 显式 `flyway-database-postgresql`。
 - **Fail Fast**:内部代码信任类型系统,不加多余 `?:`/`||` fallback;异常第一时间暴露。只在系统边界(用户输入/外部 API)校验。
+- **模块边界**:九上下文 `com.gabon.<context>.{api,internal}`;跨上下文只依赖对方 api + 方向白名单 + **表所有权**(业务代码只访问自己上下文的 jOOQ 表,白名单无主的表失败;不覆盖 plain SQL 字符串中的表名)——均由 `ModuleBoundaryTest` 断言,白名单/豁免集中在该文件常量里。
 
 ## 静态检查 / lint(工具强制,不靠肉眼,均在 `./gradlew check`)
 
@@ -79,12 +80,15 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 
 ```
 docs/architecture-redesign.md   ← 权威设计文档,先读
+docs/superpowers/specs/          设计 spec(模块边界+身份域等)
 src/main/kotlin/com/gabon/       ← 包根 com.gabon(GabonApplication 为入口)
-  ledger/     钱核(双分录、幂等、守卫、AccountKind forced type)
-  outbox/     事务性 outbox + SKIP LOCKED 租约领取
-  feed/       suspend 编排层(协程边界)
+  platform/   共享内核(outbox、security、web;人人可依,不得反向依赖业务上下文)
+  wallet/     钱包与账本(internal/ledger:双分录、幂等、守卫、AccountKind forced type)
+  identity/ recharge/ withdraw/ reward/ content/ media/ moderation/ reporting/
+              九上下文格子,各含 {api,internal};content/internal/feed 为 suspend 编排层
 src/main/resources/db/migration/ Flyway 迁移(schema 唯一真相)
-src/test/.../ArchitectureTest.kt ArchUnit 边界断言
+src/test/.../ArchitectureTest.kt ArchUnit 持久层/协程边界断言
+src/test/.../ModuleBoundaryTest.kt 模块边界断言(方向白名单、表所有权)
 config/detekt/detekt.yml         detekt 配置
 ```
 
