@@ -541,7 +541,7 @@ EOF
 ② 硬规则节末尾新增一条:
 
 ```markdown
-- **模块边界**:九上下文 `com.gabon.<context>.{api,internal}`;跨上下文只依赖对方 api + 方向白名单 + **表所有权**(业务代码只访问自己上下文的 jOOQ 表,白名单无主的表失败)——均由 `ModuleBoundaryTest` 断言,白名单/豁免集中在该文件常量里。
+- **模块边界**:九上下文 `com.gabon.<context>.{api,internal}`;跨上下文只依赖对方 api + 方向白名单 + **表所有权**(业务代码只访问自己上下文的 jOOQ 表,白名单无主的表失败;不覆盖 plain SQL 字符串中的表名)——均由 `ModuleBoundaryTest` 断言,白名单/豁免集中在该文件常量里。
 ```
 
 ③ 目录结构节的代码块替换为:

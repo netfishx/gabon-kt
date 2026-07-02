@@ -39,7 +39,7 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-25.jdk/Contents/Home
 # OrbStack + Testcontainers:必须显式指向 socket(本机相关,换机器需改)
 export DOCKER_HOST=unix:///Users/ethanwang/.orbstack/run/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
-./gradlew check            # codegen + 编译 + ktlint + detekt + 9 测试(CI 主入口)
+./gradlew check            # codegen + 编译 + ktlint + detekt + 14 测试(CI 主入口)
 
 ./gradlew test --tests "com.gabon.RechargeIdempotencyTest"   # 跑单个测试类(需同样的 Docker 环境变量)
 ./gradlew ktlintFormat     # 格式自动修复
