@@ -48,8 +48,9 @@ com.gabon
 ```
 
 - **空格子用真实 marker 类**(ArchUnit 扫 classpath 必须看得见,`package-info.kt` 不保证产出 class):
-  - `api/<Context>Api.kt`:`interface <Context>ApiMarker`
+  - `api/<Context>ApiMarker.kt`:`interface <Context>ApiMarker`(文件名与顶层声明同名,ktlint filename 规则)
   - `internal/<Context>InternalMarker.kt`:`internal object <Context>InternalMarker`
+  - 上下文出现真实类后删除对应 marker(仅空格子占位)。
 - **现有代码迁移**:`ledger` → `wallet.internal.ledger`;`outbox` → `platform.outbox`;`feed` → `content.internal.feed`。连带:`build.gradle.kts` forced type FQCN 更新;既有 ArchUnit 钱核禁协程规则的包集合改为 `..wallet..`/`..recharge..`/`..withdraw..`(覆盖整上下文,严格强于原 `..ledger..`/`..payment..`/`..withdraw..`)。
 - **`AccountKind` 定性**:forced type 使 `com.gabon.jooq` 生成代码引用 `wallet.internal.ledger.AccountKind`,可接受(jooq 是豁免区);但该枚举**只限钱核内部/持久层使用**,其他上下文不得将其当 API 类型;wallet 对外暴露账户类型时另设 `wallet.api` 类型。
 - **广告域边界条件**:旧系统 `Ad/Advertisement` 暂并入 `content`;只要广告还是内容展示/配置,不涉及投放预算、计费、结算、商户账户,就留在 content;一旦出现商业闭环再拆独立上下文(届时新增白名单项)。
@@ -69,7 +70,7 @@ com.gabon
 | 6 | **表所有权** | 业务代码只能在所属上下文的 internal 仓储/服务中访问该上下文拥有的 jOOQ 表;跨上下文数据访问必须走对方 api。显式 table→owner 白名单(常量);**白名单里无主的表直接失败**(新迁移必须登记归属) |
 
 - **reporting 单向**:reporting 只允许依赖各上下文 api,**任何上下文不得依赖 reporting**(防后台查询反向污染业务域)。
-- **jooq 豁免的边界**:`com.gabon.jooq..` 豁免仅表示"import 生成代码不构成跨上下文包依赖",**不绕过表所有权**——任意上下文直接读写他人表(如 content 引用 `ACCOUNT`)会被规则 6 拦下,B4"跨模块只经 api/领域事件"由此闭环。初始白名单:`account`/`ledger_txn`/`ledger_entry` → wallet;`outbox`/`inbox` → platform;`customer`/`admin_user`/`refresh_token` → identity。
+- **jooq 豁免的边界**:`com.gabon.jooq..` 豁免仅表示"import 生成代码不构成跨上下文包依赖",**不绕过表所有权**——任意上下文直接读写他人表(如 content 引用 `ACCOUNT`)会被规则 6 拦下,B4"跨模块只经 api/领域事件"由此闭环。初始白名单:`account`/`ledger_txn`/`ledger_entry` → wallet;`outbox`/`inbox` → platform;`customer`/`admin_user`/`refresh_token` → identity(identity 三表随第二批 DDL 落地时才进代码白名单,完整性断言会强制)。
 - **规则 6 已知检测边界**:基于字节码依赖分析,**不覆盖 plain SQL 字符串字面量中的表名**(`DSL.field("...")`/`resultQuery("...")` 等拼接表名的写法字节码里无表类引用)。plain SQL 中引用他人上下文的表属人工 review 范围,不得以"规则 6 没报"为合规依据。
 - 既有 4 条断言(jOOQ-only、钱核禁协程、feed 无事务、禁 `@Transactional suspend`)保留,仅更新包匹配;钱核禁协程覆盖 `..wallet..`/`..recharge..`/`..withdraw..` 整上下文。
 

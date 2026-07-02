@@ -37,12 +37,12 @@
     {
       "id": 17,
       "subject": "Batch1-Task 5: 文档同步(B4 决策注记 + CLAUDE.md)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         16
       ],
       "description": "**Goal:** 方案 A 决策注记进架构文档 B4;CLAUDE.md 硬规则包名、模块边界条目、目录结构对齐九格子。完整文本在计划文档 Task 5。\n\n**Files:**\n- Modify: docs/architecture-redesign.md、CLAUDE.md\n\n**Acceptance Criteria:**\n- B4 含方案 A 决策注记(用户定稿措辞)\n- CLAUDE.md 含模块边界/表所有权硬规则,目录结构更新\n- git diff --stat 仅 2 个 md\n\n**Verify:** git diff --stat 仅 2 个 md;通读改动\n\n```json:metadata\n{\"modelTier\": \"mechanical\", \"files\": [\"docs/architecture-redesign.md\", \"CLAUDE.md\"], \"verifyCommand\": \"git diff --stat\", \"acceptanceCriteria\": [\"B4 decision note added\", \"CLAUDE.md grid and hard rules updated\", \"only two md files changed\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-07-02T19:30:00+08:00"
+  "lastUpdated": "2026-07-02T20:10:00+08:00"
 }
