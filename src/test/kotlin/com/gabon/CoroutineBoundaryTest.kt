@@ -1,6 +1,6 @@
 package com.gabon
 
-import com.gabon.feed.FeedOrchestrator
+import com.gabon.content.internal.feed.FeedOrchestrator
 import com.gabon.wallet.internal.ledger.LedgerService
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat

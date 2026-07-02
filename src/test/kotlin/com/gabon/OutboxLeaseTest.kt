@@ -1,6 +1,6 @@
 package com.gabon
 
-import com.gabon.outbox.OutboxRepo
+import com.gabon.platform.outbox.OutboxRepo
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

@@ -1,4 +1,4 @@
-package com.gabon.outbox
+package com.gabon.platform.outbox
 
 import com.gabon.jooq.tables.references.OUTBOX
 import org.jooq.DSLContext

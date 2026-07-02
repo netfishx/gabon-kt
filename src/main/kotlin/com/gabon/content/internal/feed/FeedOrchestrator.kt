@@ -1,4 +1,4 @@
-package com.gabon.feed
+package com.gabon.content.internal.feed
 
 import com.gabon.wallet.api.WalletBalanceApi
 import kotlinx.coroutines.Dispatchers
