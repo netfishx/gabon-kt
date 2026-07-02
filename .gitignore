@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+build/
+
+# Kotlin (KGP 2.x 本地构建目录)
+.kotlin/
+
+# 生成代码在 build/ 下(jooqCodegen 输出),已被 build/ 覆盖
+
+# IDE / 编辑器
+.idea/
+*.iml
+.vscode/
+.zed/
+
+# 操作系统
+.DS_Store
+
+# 日志
+*.log

@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: gabon-next
+  threads:
+    virtual:
+      enabled: true          # 验收④②：钱核走虚拟线程
+  flyway:
+    enabled: true            # Boot 4 需 spring-boot-starter-flyway 才会启动时自动迁移
+    locations: classpath:db/migration
+wallet:
+  exchange-rate: 100         # 验收①：@ConfigurationProperties 构造器绑定
+  currency: CNY

@@ -1,0 +1,7 @@
+# detekt 覆盖项（buildUponDefaultConfig=true，仅写与默认不同的）
+style:
+  MagicNumber:
+    ignoreEnums: true          # 枚举码(如 AccountKind 的 1..5)不算 magic number
+    ignoreNumbers: ['-1', '0', '1', '2']
+  MaxLineLength:
+    maxLineLength: 140
