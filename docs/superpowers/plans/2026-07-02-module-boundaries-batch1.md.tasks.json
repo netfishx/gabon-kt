@@ -1,0 +1,40 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-02-module-boundaries-batch1.md",
+  "tasks": [
+    {
+      "id": 13,
+      "subject": "Batch1-Task 1: wallet 格子:ledger 迁入 + WalletBalanceApi",
+      "status": "pending",
+      "description": "**Goal:** com.gabon.ledger 迁至 com.gabon.wallet.internal.ledger,新建 wallet.api.WalletBalanceApi,feed 改依赖 api,连带更新 codegen 配置与既有 ArchUnit 钱核规则。\n\n**Files:**\n- Create: src/main/kotlin/com/gabon/wallet/api/WalletBalanceApi.kt\n- Move+Modify: src/main/kotlin/com/gabon/ledger/{AccountKind,LedgerService}.kt → src/main/kotlin/com/gabon/wallet/internal/ledger/\n- Modify: src/main/kotlin/com/gabon/feed/FeedOrchestrator.kt、build.gradle.kts:126-127、src/test/kotlin/com/gabon/ArchitectureTest.kt:50、测试 import ×3\n\n**Acceptance Criteria:**\n- com.gabon.ledger 包不复存在\n- FeedOrchestrator 只 import wallet.api\n- 钱核禁协程规则覆盖 ..wallet../..recharge../..withdraw..\n- ./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"src/main/kotlin/com/gabon/wallet/api/WalletBalanceApi.kt\", \"build.gradle.kts\", \"src/test/kotlin/com/gabon/ArchitectureTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"ledger package relocated under wallet/internal\", \"feed depends on wallet.api only\", \"money-core rule covers wallet/recharge/withdraw\", \"gradlew check green\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Batch1-Task 2: outbox → platform、feed → content",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** OutboxRepo 迁入 platform.outbox,FeedOrchestrator 迁入 content.internal.feed,测试 import 跟进。\n\n**Files:**\n- Move+Modify: OutboxRepo.kt → platform/outbox/;FeedOrchestrator.kt → content/internal/feed/\n- Modify: OutboxLeaseTest、CoroutineBoundaryTest import\n\n**Acceptance Criteria:**\n- com.gabon.outbox、com.gabon.feed 包不复存在\n- feed 无事务规则仍生效(..feed.. 匹配新路径)\n- ./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"mechanical\", \"files\": [\"src/main/kotlin/com/gabon/platform/outbox/OutboxRepo.kt\", \"src/main/kotlin/com/gabon/content/internal/feed/FeedOrchestrator.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"old packages gone\", \"feed rule still matches\", \"gradlew check green\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Batch1-Task 3: 九上下文 marker 类",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "**Goal:** 空格子放真实 marker 类,九上下文 api/internal 包 classpath 可见。\n\n**Files:**\n- Create: 8 api marker(identity/recharge/withdraw/reward/content/media/moderation/reporting)+ 7 internal marker(同上除 content;wallet/content 已有真实类的包不需要)\n\n**Acceptance Criteria:**\n- 九上下文 api/internal 包均含编译产物类\n- ./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"mechanical\", \"files\": [\"src/main/kotlin/com/gabon/\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"15 marker files exactly per list\", \"gradlew check green\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Batch1-Task 4: ModuleBoundaryTest(规则 1-4 + 表所有权)",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "**Goal:** 表驱动边界断言:两两 internal 禁入、方向白名单、platform 不反向依赖、表所有权白名单(无主表失败);负向探针验证后 revert。完整代码在计划文档 Task 4。\n\n**Files:**\n- Create: src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\n\n**Acceptance Criteria:**\n- spec §4 规则 1/2/3/4/6 全部有断言\n- 负向探针使规则 6 失败,revert 后恢复绿(不提交)\n- ./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"rules 1-4 and 6 asserted\", \"negative probe fails then reverts green\", \"gradlew check green\"]}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Batch1-Task 5: 文档同步(B4 决策注记 + CLAUDE.md)",
+      "status": "pending",
+      "blockedBy": [16],
+      "description": "**Goal:** 方案 A 决策注记进架构文档 B4;CLAUDE.md 硬规则包名、模块边界条目、目录结构对齐九格子。完整文本在计划文档 Task 5。\n\n**Files:**\n- Modify: docs/architecture-redesign.md、CLAUDE.md\n\n**Acceptance Criteria:**\n- B4 含方案 A 决策注记(用户定稿措辞)\n- CLAUDE.md 含模块边界/表所有权硬规则,目录结构更新\n- git diff --stat 仅 2 个 md\n\n**Verify:** git diff --stat 仅 2 个 md;通读改动\n\n```json:metadata\n{\"modelTier\": \"mechanical\", \"files\": [\"docs/architecture-redesign.md\", \"CLAUDE.md\"], \"verifyCommand\": \"git diff --stat\", \"acceptanceCriteria\": [\"B4 decision note added\", \"CLAUDE.md grid and hard rules updated\", \"only two md files changed\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-02"
+}
