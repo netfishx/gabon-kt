@@ -1,7 +1,7 @@
 package com.gabon
 
 import com.gabon.jooq.tables.references.LEDGER_TXN
-import com.gabon.ledger.LedgerService
+import com.gabon.wallet.internal.ledger.LedgerService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

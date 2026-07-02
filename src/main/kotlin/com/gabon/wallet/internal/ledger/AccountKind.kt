@@ -1,4 +1,4 @@
-package com.gabon.ledger
+package com.gabon.wallet.internal.ledger
 
 import org.jooq.impl.AbstractConverter
 

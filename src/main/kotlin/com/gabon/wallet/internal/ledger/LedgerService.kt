@@ -1,8 +1,9 @@
-package com.gabon.ledger
+package com.gabon.wallet.internal.ledger
 
 import com.gabon.jooq.tables.references.ACCOUNT
 import com.gabon.jooq.tables.references.LEDGER_ENTRY
 import com.gabon.jooq.tables.references.LEDGER_TXN
+import com.gabon.wallet.api.WalletBalanceApi
 import org.jooq.DSLContext
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -19,7 +20,7 @@ const val BIZ_RECHARGE: Short = 1
 @Service
 class LedgerService(
     private val dsl: DSLContext,
-) {
+) : WalletBalanceApi {
     /** 幂等充值入账：txn 头冲突即短路 → 双分录 → 余额投影，全在一个事务。 */
     @Transactional
     fun creditRecharge(
@@ -53,7 +54,7 @@ class LedgerService(
         return true
     }
 
-    fun balanceOf(customerId: Long): Long =
+    override fun balanceOf(customerId: Long): Long =
         dsl
             .select(ACCOUNT.BALANCE)
             .from(ACCOUNT)

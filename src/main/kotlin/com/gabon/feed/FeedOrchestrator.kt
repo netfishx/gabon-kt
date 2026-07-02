@@ -1,6 +1,6 @@
 package com.gabon.feed
 
-import com.gabon.ledger.LedgerService
+import com.gabon.wallet.api.WalletBalanceApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -16,12 +16,12 @@ data class FeedView(
 
 /**
  * 编排层：允许协程（结构化并发 + 超时 + 取消），仅做多源 fan-out 合并。
- * 落库/事务动作回到阻塞 @Transactional service 边界（LedgerService）。
+ * 落库/事务动作回到阻塞 @Transactional service 边界（wallet.api）。
  * 见架构文档 B5.1：suspend 编排 → 阻塞服务；本层禁 @Transactional。
  */
 @Component
 class FeedOrchestrator(
-    private val ledger: LedgerService,
+    private val ledger: WalletBalanceApi,
 ) {
     suspend fun assemble(customerId: Long): FeedView =
         coroutineScope {

@@ -123,8 +123,8 @@ tasks.register("jooqCodegen") {
                                     .withForcedTypes(
                                         // 验收②：真实 forced type —— account.kind → AccountKind(经 Converter)
                                         ForcedType()
-                                            .withUserType("com.gabon.ledger.AccountKind")
-                                            .withConverter("com.gabon.ledger.AccountKindConverter")
+                                            .withUserType("com.gabon.wallet.internal.ledger.AccountKind")
+                                            .withConverter("com.gabon.wallet.internal.ledger.AccountKindConverter")
                                             .withIncludeExpression("(?i:.*account\\.kind)")
                                             .withIncludeTypes("(?i:smallint|int2)"),
                                     ),

@@ -42,12 +42,12 @@ class ArchitectureTest {
             ).check(classes)
     }
 
-    /** 钱核边界：资金包（阻塞 + @Transactional）不得依赖协程库——协程仅编排层（见 B5.1） */
+    /** 钱核边界：资金上下文(wallet/recharge/withdraw)（阻塞 + @Transactional）不得依赖协程库——协程仅编排层（见 B5.1） */
     @Test
     fun `money core packages do not depend on coroutines`() {
         noClasses()
             .that()
-            .resideInAnyPackage("..ledger..", "..payment..", "..withdraw..")
+            .resideInAnyPackage("..wallet..", "..recharge..", "..withdraw..")
             .should()
             .dependOnClassesThat()
             .resideInAnyPackage("kotlinx.coroutines..")

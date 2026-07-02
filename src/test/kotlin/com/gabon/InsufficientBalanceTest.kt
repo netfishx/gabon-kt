@@ -1,9 +1,9 @@
 package com.gabon
 
 import com.gabon.jooq.tables.references.ACCOUNT
-import com.gabon.ledger.AccountKind
-import com.gabon.ledger.LedgerService
-import com.gabon.ledger.OWNER_CUSTOMER
+import com.gabon.wallet.internal.ledger.AccountKind
+import com.gabon.wallet.internal.ledger.LedgerService
+import com.gabon.wallet.internal.ledger.OWNER_CUSTOMER
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
