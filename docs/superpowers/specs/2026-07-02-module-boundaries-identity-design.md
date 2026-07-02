@@ -63,7 +63,7 @@ com.gabon
 |---|---|---|
 | 1 | 禁止跨上下文访问 `..internal..` | 九上下文两两生成 `noClasses()...dependOnClassesThat()` 断言 |
 | 2 | 跨上下文只许依赖对方 `..api..` | 上下文对外依赖 ∈ {对方 api, platform, jooq, 三方库} |
-| 3 | 依赖方向白名单(显式常量表) | `recharge→wallet`、`withdraw→wallet`、`reward→wallet`、`moderation→content`、`media→content`、`reporting→各上下文 api`;白名单外的上下文间依赖即失败 |
+| 3 | 依赖方向白名单(显式常量表) | `recharge→wallet`、`withdraw→wallet`、`reward→wallet`、`moderation→content`、`media→content`、`content→wallet`(**spike 探针保留边**:feed 编排经 wallet.api 读余额,C11 验收④探针;内容域正式设计(子项目 4)时复审)、`reporting→各上下文 api`;白名单外的上下文间依赖即失败 |
 | 4 | 豁免清单(集中一个常量,可 review) | `com.gabon.platform..`(人人可依)、`com.gabon.jooq..`(生成代码)、`GabonApplication`(启动装配) |
 | 5 | CI 门禁 | 规则进 `./gradlew check`,不允许跳过测试合并;不新增 CI 步骤 |
 | 6 | **表所有权** | 业务代码只能在所属上下文的 internal 仓储/服务中访问该上下文拥有的 jOOQ 表;跨上下文数据访问必须走对方 api。显式 table→owner 白名单(常量);**白名单里无主的表直接失败**(新迁移必须登记归属) |
