@@ -17,9 +17,10 @@
 - 实施拆四批,本计划只覆盖第一批;springdoc 独立 spike 不进主线
 - 广告暂并入 content(仅限展示/配置,出现商业闭环即拆)
 
-**计划注记(相对 spec 的两处微调,执行前请知悉):**
-1. **新增白名单边 `content→wallet`**:现有 `FeedOrchestrator`(迁入 content)调用 `LedgerService.balanceOf`(迁入 wallet.internal)。按 B4 正形改造:新建 `wallet.api.WalletBalanceApi`,feed 只依赖 api。保留该调用是因为它是 C11 验收④的协程边界探针(CLAUDE.md:spike pattern 不推翻)。
+**计划注记(执行前请知悉):**
+1. **白名单边 `content→wallet`(依赖图变更,已回填 spec §4,commit a3615db)**:现有 `FeedOrchestrator`(迁入 content)调用余额读取,按 B4 正形改造为只依赖新建的 `wallet.api.WalletBalanceApi`。该边定性为 **spike 探针保留边**(C11 验收④;CLAUDE.md:spike pattern 不推翻),内容域正式设计(子项目 4)时复审;Task 5 的 B4 决策注记同步记载。
 2. **marker 文件名**:ktlint `filename` 规则要求文件名与唯一顶层声明一致,故文件为 `<Context>ApiMarker.kt` / `<Context>InternalMarker.kt`(spec 写的 `<Context>Api.kt` 会被 ktlint 拒);类名不变。
+3. **提交署名**:commit 模板不硬编码执行者身份;本会话内由 Claude 执行时按 harness 约定自动附加 Co-Authored-By/Session 尾注,其他执行环境(人工/其他 agent)按真实身份署名。
 
 ---
 
@@ -155,9 +156,6 @@ refactor: move ledger into wallet context with api
 
 First step of the module grid (spec batch 1): money core now
 lives in its bounded context and exposes balance reads via api.
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_018jk5cb9xUDttqkj4zzJpAJ
 EOF
 )"
 ```
@@ -214,9 +212,6 @@ refactor: move outbox to platform and feed to content
 
 Completes the code relocation for the module grid; the feed
 ArchUnit rule still matches the new package via ..feed..
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_018jk5cb9xUDttqkj4zzJpAJ
 EOF
 )"
 ```
@@ -283,9 +278,6 @@ feat: add api and internal markers for all contexts
 
 Real classes (not package-info) so ArchUnit sees every context
 package on the classpath from day one, per spec section 3.
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_018jk5cb9xUDttqkj4zzJpAJ
 EOF
 )"
 ```
@@ -301,7 +293,8 @@ EOF
 
 **Acceptance Criteria:**
 - [ ] spec §4 规则 1/2/3/4/6 全部有断言(规则 5 即"进 check"本身)
-- [ ] 负向探针(临时违规代码)使对应规则失败,revert 后恢复绿(探针不提交)
+- [ ] **完整性断言**:`com.gabon.jooq.tables` 每个顶层表类都在 TABLE_OWNER 登记,不依赖是否已有业务代码引用;导入为空同样失败(防空过)
+- [ ] 负向探针**证明 `tables.references.ACCOUNT` 形式的访问被规则 6 拦住**;若未拦住,扩展检测方式,不得提交空过规则(探针不提交)
 - [ ] `./gradlew check` 全绿
 
 **Verify:** 同 Task 1 check 命令 → `BUILD SUCCESSFUL`,测试数 9→10+
@@ -353,7 +346,7 @@ class ModuleBoundaryTest {
 
         /**
          * 规则 3:依赖方向白名单(源上下文 → 允许依赖的目标上下文)。
-         * content→wallet:feed 编排经 wallet.api 读余额(计划注记 1)。
+         * content→wallet:spike 探针保留边(feed 编排经 wallet.api 读余额),内容域正式化(子项目 4)时复审。
          * reporting→全部:后台只读各 api;反向禁止(无人把 reporting 列为目标)。
          */
         private val ALLOWED: Map<String, Set<String>> =
@@ -473,6 +466,19 @@ class ModuleBoundaryTest {
             .should(onlyOwnTables)
             .check(classes)
     }
+
+    /** 规则 6 完整性:codegen 产出的每个表类必须在 TABLE_OWNER 登记——新迁移没登记就失败,不依赖是否已有业务代码引用(spec §4) */
+    @Test
+    fun `every jooq table class has a registered owner`() {
+        val tables =
+            classes
+                .filter { it.packageName == "com.gabon.jooq.tables" }
+                .filter { it.isTopLevelClass }
+                .filter { !it.simpleName.endsWith("Kt") && !it.simpleName.endsWith("Path") }
+        check(tables.isNotEmpty()) { "com.gabon.jooq.tables 导入为空:archunit.main.classes 或 codegen 异常,断言失去意义" }
+        val unregistered = tables.map { it.simpleName }.filterNot { it in TABLE_OWNER }
+        check(unregistered.isEmpty()) { "jOOQ 表未在 TABLE_OWNER 登记归属:$unregistered(spec §4 规则 6:新迁移必须登记)" }
+    }
 }
 ```
 
@@ -481,9 +487,9 @@ class ModuleBoundaryTest {
 Run: Verify 命令。Expected: `BUILD SUCCESSFUL`。
 若规则 6 因生成类命名误报(如 KotlinGenerator 的嵌套 path 类):`ls build/generated/jooq/com/gabon/jooq/tables/` 查看真实类名,调整跳过逻辑(只准收窄跳过范围,不许放宽所有权映射)。
 
-- [ ] **Step 3: 负向探针(不提交)**
+- [ ] **Step 3: 负向探针(不提交)——必须证明 references 形式被拦**
 
-在 `FeedOrchestrator.kt` 临时加一行 `private val probe = com.gabon.jooq.tables.references.ACCOUNT`,跑 `./gradlew test --tests "com.gabon.ModuleBoundaryTest"`,期望规则 6 失败(content 访问 wallet 的表);revert 该行,重跑恢复绿。
+在 `FeedOrchestrator.kt` 临时加一行 `private val probe = com.gabon.jooq.tables.references.ACCOUNT`,跑 `./gradlew test --tests "com.gabon.ModuleBoundaryTest"`,**期望规则 6 失败**(content 访问 wallet 的表)。业务代码经 `references` 顶层属性(字节码为 `TablesKt.getACCOUNT()` 返回 `Account`)的依赖预期会被 `directDependenciesFromSelf` 捕获,**但不许靠推测**:若探针未被拦住,把检测扩展到方法调用/字段访问的目标与返回类型(`methodCallsFromSelf`/`fieldAccessesFromSelf`),直到探针变红;**禁止提交一个探针测不红的规则**。revert 探针后重跑恢复绿。
 
 - [ ] **Step 4: Commit**
 
@@ -499,9 +505,6 @@ test: add module boundary ArchUnit rules
 
 Table ownership closes the loophole where the jooq package
 exemption would let any context read another context's tables.
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_018jk5cb9xUDttqkj4zzJpAJ
 EOF
 )"
 ```
@@ -528,7 +531,7 @@ EOF
 - [ ] **Step 1: architecture-redesign.md B4 末尾(限界上下文段落之后)追加**
 
 ```markdown
-> **实施决策(2026-07,迁移子项目 1)**:采用方案 A——单 Gradle 模块 + `com.gabon.<context>.{api,internal}` 包边界 + ArchUnit 强制。B(多 Gradle 子项目物理隔离)/ C(Spring Modulith 提前上)都不是当前实现分支,而是架构改案:B 会重做已验证的 jOOQ/codegen/Gradle 构建链;C 违反 Modulith 二期增强的分期。若要改 B/C,必须新 ADR + spike。规则与表所有权白名单见 `src/test/kotlin/com/gabon/ModuleBoundaryTest.kt`;设计全文见 `docs/superpowers/specs/2026-07-02-module-boundaries-identity-design.md`。
+> **实施决策(2026-07,迁移子项目 1)**:采用方案 A——单 Gradle 模块 + `com.gabon.<context>.{api,internal}` 包边界 + ArchUnit 强制。B(多 Gradle 子项目物理隔离)/ C(Spring Modulith 提前上)都不是当前实现分支,而是架构改案:B 会重做已验证的 jOOQ/codegen/Gradle 构建链;C 违反 Modulith 二期增强的分期。若要改 B/C,必须新 ADR + spike。规则与表所有权白名单见 `src/test/kotlin/com/gabon/ModuleBoundaryTest.kt`;设计全文见 `docs/superpowers/specs/2026-07-02-module-boundaries-identity-design.md`。方向白名单当前含 `content→wallet`(spike 探针保留边:feed 编排经 wallet.api 读余额;内容域正式设计时复审)。
 ```
 
 - [ ] **Step 2: CLAUDE.md 三处**
@@ -572,9 +575,6 @@ docs: record plan A decision and module grid layout
 
 Keeps the two guidance documents aligned with the module grid
 landed in spec batch 1 so future sessions start correct.
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_018jk5cb9xUDttqkj4zzJpAJ
 EOF
 )"
 ```
