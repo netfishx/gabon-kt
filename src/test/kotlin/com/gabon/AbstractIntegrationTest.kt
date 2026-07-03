@@ -25,7 +25,7 @@ abstract class AbstractIntegrationTest {
     fun clean() {
         dsl.execute(
             "truncate ledger_entry, ledger_txn, outbox, inbox, account, refresh_token, admin_user, " +
-                "customer restart identity cascade",
+                "customer, recharge_order, recharge_package, withdraw_order restart identity cascade",
         )
         // 单例容器跨测试复用，jti/计数键会残留——每测试前 flush 整库
         redisConnectionFactory.connection.use { it.serverCommands().flushDb() }
