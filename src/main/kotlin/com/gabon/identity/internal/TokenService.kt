@@ -109,9 +109,12 @@ class TokenService(
         currentJti: String,
         expiresAt: Instant,
     ) {
-        repo.revokeAllFor(type, principalId)
-        // iat < 吊销秒的全部存量 access 立即失效;同秒签发为 spec §5.2 已接受的残余敞口
-        revocations.revokePrincipal(type, principalId, clock.instant(), codec.accessTtl())
+        val families = repo.revokeAllFor(type, principalId)
+        val accessTtl = codec.accessTtl()
+        // 每个被吊 family 写 sid 标记:cutoff 的秒级粒度会系统性放过"与改密同秒完成的
+        // 串行化竞态登录",sid 键无粒度问题;principal cutoff 保留兜底(spec §5.2)
+        families.forEach { revocations.revokeSid(it, accessTtl) }
+        revocations.revokePrincipal(type, principalId, clock.instant(), accessTtl)
         blacklistRemaining(currentJti, expiresAt)
     }
 

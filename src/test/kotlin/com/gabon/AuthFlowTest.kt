@@ -1,15 +1,23 @@
 package com.gabon
 
+import com.gabon.identity.internal.AuthService
+import com.gabon.identity.internal.CustomerRepository
 import com.gabon.identity.internal.web.ChangePasswordRequest
 import com.gabon.identity.internal.web.LoginRequest
 import com.gabon.identity.internal.web.RefreshRequest
 import com.gabon.identity.internal.web.RegisterRequest
 import com.gabon.identity.internal.web.TokenPairResponse
 import com.gabon.jooq.tables.references.CUSTOMER
+import com.gabon.platform.security.AccessTokenCodec
+import com.gabon.platform.security.TokenRevocationStore
+import com.gabon.platform.web.ProblemException
+import com.gabon.platform.web.ProblemType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.clearInvocations
+import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.springframework.beans.factory.annotation.Autowired
@@ -24,6 +32,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import tools.jackson.databind.ObjectMapper
+import kotlin.concurrent.thread
 
 /**
  * C 端鉴权全链路验收(spec §5.1/§5.3):注册/登录/me/logout/改密 + 锁定/IP 限流 + 防枚举统一 401。
@@ -39,6 +48,19 @@ class AuthFlowTest : AbstractIntegrationTest() {
     /** spy(透传真实实现):等功耗用例数 matches 调用次数,替代 flaky 的 wall-clock 断言。 */
     @MockitoSpyBean
     lateinit var passwordEncoder: PasswordEncoder
+
+    /** spy(透传真实实现):竞态用例在"登录已读旧 hash"这一时点注入并发改密。 */
+    @MockitoSpyBean
+    lateinit var customerRepo: CustomerRepository
+
+    @Autowired
+    lateinit var authService: AuthService
+
+    @Autowired
+    lateinit var codec: AccessTokenCodec
+
+    @Autowired
+    lateinit var revocations: TokenRevocationStore
 
     @Test
     fun `register then login then me returns the display username`() {
@@ -105,6 +127,29 @@ class AuthFlowTest : AbstractIntegrationTest() {
         login("dave", PASSWORD).andExpect(status().isUnauthorized) // 锁定期内正确密码也 401
         redisConnectionFactory.connection.use { it.serverCommands().flushDb() } // 等价锁过期
         login("dave", PASSWORD).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `password change revokes a login racing on the old password`() {
+        val pair = register("racer")
+        val principal = codec.verify(pair.accessToken)!!
+        var change: Thread? = null
+        doAnswer { invocation ->
+            val row = invocation.callRealMethod()
+            // 登录已读旧 hash:此刻另起线程改密,复现"读旧凭据→改密先完成→旧密码登录继续签发"竞态。
+            // 无行锁时改密在窗口内完成(RED);有行锁时它阻塞至登录提交,吊销必然覆盖竞态 family(GREEN)。
+            change = thread { authService.changePassword(principal, PASSWORD, NEW_PASSWORD) }
+            Thread.sleep(RACE_WINDOW_MS)
+            row
+        }.`when`(customerRepo).findAuthByCanonical("racer")
+
+        val raced = authService.login("racer", PASSWORD, "10.9.9.9", null)
+        change!!.join()
+
+        // 改密必须吊销竞态登录的 session:refresh 与 access 都不可再用
+        val ex = assertThrows<ProblemException> { authService.refresh(raced.refreshToken, null, null) }
+        assertThat(ex.type).isEqualTo(ProblemType.INVALID_CREDENTIALS)
+        assertThat(revocations.isRevoked(codec.verify(raced.accessToken)!!)).isTrue()
     }
 
     @Test
@@ -233,5 +278,8 @@ class AuthFlowTest : AbstractIntegrationTest() {
         private const val MAX_FAILURES = 5
         private const val IP_LIMIT = 30
         private const val DISABLED_STATUS: Short = 0
+
+        /** 竞态窗口:无锁实现下并发改密(约 2 次 bcrypt ≈ 200ms)须在窗口内完成。 */
+        private const val RACE_WINDOW_MS = 1500L
     }
 }

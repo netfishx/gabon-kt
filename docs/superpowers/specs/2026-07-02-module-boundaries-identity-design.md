@@ -93,7 +93,8 @@ com.gabon
 - **旋转并发语义(实现约束,防并发双旋转)**:旋转必须原子抢占——`UPDATE refresh_token SET rotated_at = now() WHERE token_hash = ? AND rotated_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,命中 1 行才签发新 token;0 行且该 token 存在(已 rotated/revoked)即判定重放 → 吊销整个 family。与 C2.4 状态机 CAS 同款模式,禁止读-改-写。
 - **登出**:凭 access JWT 的 `sid` 定位并吊销对应 refresh family + 当前 `jti` 进 Valkey 黑名单(TTL = 剩余有效期);logout 请求无需提交 refresh token。
 - **改密**:吊销该主体全部 family + 黑名单当前 jti。
-- **存量 access 立即失效(2026-07-03 修订,替代原"其它设备存量票滑行 ≤ access TTL"取舍)**:任何 family 吊销(登出/重放检测)同步写 Valkey `auth:revoke:sid:{family_id}`;改密(全量吊销)写 `auth:revoke:principal:{typ}:{sub}` = 吊销时刻 epoch 秒。两键 TTL = access TTL(越过后存量票已自然过期,键自清)。过滤器在 jti 黑名单之外同轮校验:sid 键命中,或 principal 键存在且票 `iat` < 吊销时刻 → 401(三键一次 MGET,不增 Valkey 往返)。jti 黑名单保留(单票吊销粒度预留,不推翻既有定案)。**残余敞口**:`iat` 秒级粒度,与吊销同一秒签发的旧票不可判别(≤1s,接受);重放路径的 PG family 吊销必须先于/独立于 Valkey 键提交(键写失败 → 503 可重试,吊销不回滚)。
+- **存量 access 立即失效(2026-07-03 修订,替代原"其它设备存量票滑行 ≤ access TTL"取舍)**:任何 family 吊销(登出/重放检测)同步写 Valkey `auth:revoke:sid:{family_id}`;改密(全量吊销)对**每个被吊 family** 写 sid 键(revokeAllFor RETURNING family 集合),另写 `auth:revoke:principal:{typ}:{sub}` = 吊销时刻 epoch 秒作兜底(cutoff 秒级粒度会系统性放过与改密同秒完成的串行化竞态登录,sid 键无此问题)。两键 TTL = access TTL(越过后存量票已自然过期,键自清)。过滤器在 jti 黑名单之外同轮校验:sid 键命中,或 principal 键存在且票 `iat` < 吊销时刻 → 401(三键一次 MGET,不增 Valkey 往返)。jti 黑名单保留(单票吊销粒度预留,不推翻既有定案)。**残余敞口**:`iat` 秒级粒度,与吊销同一秒签发的旧票不可判别(≤1s,接受);重放路径的 PG family 吊销必须先于/独立于 Valkey 键提交(键写失败 → 503 可重试,吊销不回滚)。
+- **吊销并发语义(2026-07-03 硬化,实现约束)**:①登录读凭据行与改密读/写凭据行必须 `SELECT ... FOR UPDATE` 串行化——否则"登录读到旧 hash → 改密完成吊销 → 登录继续签发"的新 family 恒逃过 revokeAllFor 与 iat-cutoff;②吊销 UPDATE(revokeFamily/revokeAllFor)必须循环至 0 行——READ COMMITTED 下单遍 UPDATE 会阻塞在在途旋转已抢占的行上,EvalPlanQual 只重查既有行、不重扫其提交的新插入行,旋转新签发的 refresh 会逃逸;循环下一遍以新语句快照收割。锁序恒为 customer 行 → refresh_token 行单向,无反向路径。
 - **jti 黑名单/吊销标记 fail-closed(定案)**:JWT 过滤器查黑名单或吊销标记时 Valkey 不可用 → 拒绝请求返回 503;Valkey 纳入 readiness 探针。安全优先。
 
 ### 5.3 登录保护(C7)

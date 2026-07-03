@@ -66,24 +66,46 @@ class RefreshTokenRepository(
             .fetchOne()
             ?.value1()
 
-    fun revokeFamily(familyId: UUID): Int =
-        dsl
-            .update(REFRESH_TOKEN)
-            .set(REFRESH_TOKEN.REVOKED_AT, DSL.currentOffsetDateTime())
-            .where(REFRESH_TOKEN.FAMILY_ID.eq(familyId).and(REFRESH_TOKEN.REVOKED_AT.isNull))
-            .execute()
+    /**
+     * 吊销 family 全部未吊销行,循环至 0 行(spec §5.2):READ COMMITTED 下单遍 UPDATE 的
+     * EvalPlanQual 只重查既有行、不重扫等待期间并发旋转提交的新插入行——首遍阻塞在在途
+     * 旋转已抢占的行上直至其提交,下一遍以新语句快照收割其新行;此后才起步的旋转在抢占时
+     * 即见 revoked_at → 0 行 → 走重放路径。无并发时第二遍即 0 行,恒多一次空 UPDATE。
+     */
+    fun revokeFamily(familyId: UUID): Int {
+        var total = 0
+        while (true) {
+            val rows =
+                dsl
+                    .update(REFRESH_TOKEN)
+                    .set(REFRESH_TOKEN.REVOKED_AT, DSL.currentOffsetDateTime())
+                    .where(REFRESH_TOKEN.FAMILY_ID.eq(familyId).and(REFRESH_TOKEN.REVOKED_AT.isNull))
+                    .execute()
+            if (rows == 0) return total
+            total += rows
+        }
+    }
 
+    /** 循环语义同 revokeFamily;RETURNING 收集被吊 family 集合,供调用方逐一写 sid 吊销标记。 */
     fun revokeAllFor(
         type: PrincipalType,
         principalId: Long,
-    ): Int =
-        dsl
-            .update(REFRESH_TOKEN)
-            .set(REFRESH_TOKEN.REVOKED_AT, DSL.currentOffsetDateTime())
-            .where(
-                REFRESH_TOKEN.PRINCIPAL_TYPE
-                    .eq(type.code)
-                    .and(REFRESH_TOKEN.PRINCIPAL_ID.eq(principalId))
-                    .and(REFRESH_TOKEN.REVOKED_AT.isNull),
-            ).execute()
+    ): Set<UUID> {
+        val families = mutableSetOf<UUID>()
+        while (true) {
+            val revoked =
+                dsl
+                    .update(REFRESH_TOKEN)
+                    .set(REFRESH_TOKEN.REVOKED_AT, DSL.currentOffsetDateTime())
+                    .where(
+                        REFRESH_TOKEN.PRINCIPAL_TYPE
+                            .eq(type.code)
+                            .and(REFRESH_TOKEN.PRINCIPAL_ID.eq(principalId))
+                            .and(REFRESH_TOKEN.REVOKED_AT.isNull),
+                    ).returningResult(REFRESH_TOKEN.FAMILY_ID)
+                    .fetch()
+            if (revoked.isEmpty()) return families
+            revoked.forEach { families.add(it.value1()!!) }
+        }
+    }
 }

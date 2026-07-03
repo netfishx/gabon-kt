@@ -1,5 +1,6 @@
 package com.gabon
 
+import com.gabon.identity.internal.RefreshTokenRepository
 import com.gabon.identity.internal.TokenPair
 import com.gabon.identity.internal.TokenService
 import com.gabon.jooq.tables.references.REFRESH_TOKEN
@@ -12,8 +13,10 @@ import com.gabon.platform.web.ProblemType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.mockito.Mockito.doAnswer
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -42,6 +45,10 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
 
     @Autowired
     lateinit var revocations: TokenRevocationStore
+
+    /** spy(透传真实实现):竞态用例在"旋转已抢占旧行、新行未提交"这一时点注入并发 revokeAll。 */
+    @MockitoSpyBean
+    lateinit var refreshRepo: RefreshTokenRepository
 
     @Test
     fun `rotation issues a new pair and replay of the old token revokes the whole family`() {
@@ -158,6 +165,26 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `revoke all catches a rotation still in flight`() {
+        val first = tokens.issuePair(PrincipalType.CUSTOMER, 11L, null, null)
+        val hash = MessageDigest.getInstance("SHA-256").digest(first.refreshToken.toByteArray())
+        var revoke: Thread? = null
+        doAnswer { invocation ->
+            val row = invocation.callRealMethod()
+            // 旧行已被本事务抢占:此刻另起线程 revokeAll,其吊销 UPDATE 将阻塞在被抢占行上,
+            // 直到旋转提交——单遍 UPDATE 会漏掉旋转新插入的行(RED),循环至 0 行才收割干净(GREEN)。
+            revoke = thread { tokens.revokeAll(PrincipalType.CUSTOMER, 11L, "in-flight-jti", Instant.now()) }
+            Thread.sleep(RACE_WINDOW_MS)
+            row
+        }.`when`(refreshRepo).claimForRotation(hash)
+
+        val second = tokens.refresh(first.refreshToken, null, null)
+        revoke!!.join()
+
+        assertRefreshRejected(second.refreshToken) // 旋转中签发的新 refresh 也必须被吊销
+    }
+
+    @Test
     fun `plaintext refresh token never reaches the database`() {
         val pair = tokens.issuePair(PrincipalType.ADMIN, 6L, null, null)
         val row =
@@ -189,6 +216,11 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
     private fun assertRefreshRejected(rawRefreshToken: String) {
         val ex = assertThrows<ProblemException> { tokens.refresh(rawRefreshToken, null, null) }
         assertThat(ex.type).isEqualTo(ProblemType.INVALID_CREDENTIALS)
+    }
+
+    companion object {
+        /** 竞态窗口:保证并发吊销线程在旋转提交前已发出 UPDATE 并阻塞在被抢占行上。 */
+        private const val RACE_WINDOW_MS = 1000L
     }
 
     /** 过链无路由 = 404:认证生效且未被吊销(同 SecurityChainTest 模式)。 */

@@ -51,19 +51,27 @@ class CustomerRepository(
             .fetchOne()
             ?.value1()
 
+    /**
+     * FOR UPDATE(spec §5.2 串行化契约):登录读凭据与改密读/写凭据对同一行互斥——
+     * 无锁时"登录读到旧 hash → 改密完成吊销 → 登录继续签发"的新 family 会逃过
+     * revokeAllFor 与 iat-cutoff。锁跨 bcrypt(~100ms)仅串行化同一账号,可接受。
+     */
     fun findAuthByCanonical(canonical: String): AuthRow? =
         dsl
             .select(CUSTOMER.ID, CUSTOMER.PASSWORD_HASH, CUSTOMER.STATUS)
             .from(CUSTOMER)
             .where(CUSTOMER.USERNAME_CANONICAL.eq(canonical))
+            .forUpdate()
             .fetchOne()
             ?.let { AuthRow(it.value1()!!, it.value2()!!, it.value3() == ACTIVE) }
 
+    /** FOR UPDATE:与 findAuthByCanonical 同一串行化契约(改密侧)。 */
     fun findPasswordHashById(id: Long): String? =
         dsl
             .select(CUSTOMER.PASSWORD_HASH)
             .from(CUSTOMER)
             .where(CUSTOMER.ID.eq(id))
+            .forUpdate()
             .fetchOne()
             ?.value1()
 
