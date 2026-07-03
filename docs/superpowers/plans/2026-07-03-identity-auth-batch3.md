@@ -180,9 +180,13 @@ class GlobalExceptionHandler {
     fun handleValidation(e: MethodArgumentNotValidException): ResponseEntity<ProblemDetail> =
         ResponseEntity.status(ProblemType.VALIDATION.status).body(ProblemType.VALIDATION.toProblemDetail())
 
-    /** Valkey 等鉴权基础设施不可用 → fail-closed 503(spec §5.2 定案) */
-    @ExceptionHandler(DataAccessException::class)
-    fun handleStoreDown(e: DataAccessException): ResponseEntity<ProblemDetail> {
+    /**
+     * Valkey 鉴权基础设施不可用 → fail-closed 503(spec §5.2)。
+     * **只认 Redis 专属异常**:jOOQ 经 Spring 翻译的 PG 异常同为 DataAccessException,
+     * 不得冒充 auth-store 故障——PG 侧异常落兜底 500(spec §6 fail fast;Task 1 质量审查收窄)。
+     */
+    @ExceptionHandler(RedisConnectionFailureException::class, RedisSystemException::class)
+    fun handleAuthStoreDown(e: DataAccessException): ResponseEntity<ProblemDetail> {
         log.error("auth store unavailable", e)
         return ResponseEntity
             .status(ProblemType.AUTH_STORE_UNAVAILABLE.status)
@@ -476,10 +480,15 @@ class JwtAuthFilter(
             chain.doFilter(request, response)
             return
         }
+        // fail-closed 只认 Redis 专属异常(PG 的 DataAccessException 不在此冒充;同 GlobalExceptionHandler 收窄)
         val revoked =
             try {
                 blacklist.isRevoked(principal.jti)
-            } catch (e: DataAccessException) {
+            } catch (e: RedisConnectionFailureException) {
+                logger.error("jti blacklist unavailable, failing closed", e)
+                writeProblem(response, ProblemType.AUTH_STORE_UNAVAILABLE)
+                return
+            } catch (e: RedisSystemException) {
                 logger.error("jti blacklist unavailable, failing closed", e)
                 writeProblem(response, ProblemType.AUTH_STORE_UNAVAILABLE)
                 return
