@@ -59,12 +59,16 @@ class ModuleBoundaryTest {
                 "reporting" to (CONTEXTS - "reporting").toSet(),
             )
 
-        /** 规则 6:表所有权(jOOQ 生成表类简单名 → 唯一 owner 包前缀)。新迁移的表必须在此登记。 */
+        /**
+         * 规则 6:表所有权(jOOQ 生成表类简单名 → **允许访问该表的包前缀**)。新迁移的表必须在此登记。
+         * 值取所属上下文的 internal 包——表访问只能发生在 owner 的 internal 仓储/服务里(spec §4),
+         * api 包引用自家表同样违规;platform 是共享内核、无 api/internal 切分,用整包。
+         */
         private val TABLE_OWNER: Map<String, String> =
             mapOf(
-                "Account" to "com.gabon.wallet",
-                "LedgerTxn" to "com.gabon.wallet",
-                "LedgerEntry" to "com.gabon.wallet",
+                "Account" to "com.gabon.wallet.internal",
+                "LedgerTxn" to "com.gabon.wallet.internal",
+                "LedgerEntry" to "com.gabon.wallet.internal",
                 "Outbox" to "com.gabon.platform",
                 "Inbox" to "com.gabon.platform",
             )
@@ -135,7 +139,7 @@ class ModuleBoundaryTest {
     }
 
     /**
-     * 规则 6:业务代码只许访问自己上下文拥有的 jOOQ 表;白名单无主的表直接失败。
+     * 规则 6:jOOQ 表访问只许发生在所属上下文的 internal(platform 整包)内;白名单无主的表直接失败。
      * jooq 包豁免只针对包依赖(规则 2/3 不禁),表所有权在此闭环(spec §4"jooq 豁免的边界")。
      * 候选依赖三路收集:类级依赖(字段/签名等)+ 方法调用返回类型 + 字段访问类型——
      * 后两路兜住经 references 顶层属性(字节码 TablesKt.getACCOUNT() 返回 Account)的
@@ -155,19 +159,19 @@ class ModuleBoundaryTest {
                             clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
                     candidates.forEach { target ->
                         val tableName = tableNameOf(target) ?: return@forEach
-                        val owner = TABLE_OWNER[tableName]
-                        if (owner == null) {
+                        val allowed = TABLE_OWNER[tableName]
+                        if (allowed == null) {
                             events.add(
                                 SimpleConditionEvent.violated(
                                     clazz,
                                     "jOOQ 表 $tableName 未在 TABLE_OWNER 登记归属——新迁移必须登记(spec §4 规则 6)",
                                 ),
                             )
-                        } else if (clazz.packageName != owner && !clazz.packageName.startsWith("$owner.")) {
+                        } else if (clazz.packageName != allowed && !clazz.packageName.startsWith("$allowed.")) {
                             events.add(
                                 SimpleConditionEvent.violated(
                                     clazz,
-                                    "${clazz.name} 访问 $owner 拥有的表 $tableName:跨上下文数据必须走对方 api",
+                                    "${clazz.name} 访问表 $tableName:该表仅允许 $allowed.. 内访问(api 包也不例外,跨上下文走对方 api)",
                                 ),
                             )
                         }
