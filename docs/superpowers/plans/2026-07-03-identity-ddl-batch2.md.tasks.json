@@ -19,12 +19,12 @@
     {
       "id": 20,
       "subject": "Batch2-Task 3: AbstractIntegrationTest(PG+Valkey)+ CLAUDE.md",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         19
       ],
       "description": "**Goal:** 测试基类改名 + Valkey 单例容器,CLAUDE.md 同步;main 与 build.gradle.kts 零改动。\n\n**Files:**\n- Rename+Modify: AbstractPgTest.kt → AbstractIntegrationTest.kt\n- Modify: 4 个子类基类名、CLAUDE.md\n\n**Acceptance Criteria:**\n- Valkey tag docker pull 核实;redis 属性名对照 Boot 4.1 文档核实\n- grep AbstractPgTest 零命中;不加 Redis 客户端依赖\n- ./gradlew check 全绿 16 测试\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"src/test/kotlin/com/gabon/AbstractIntegrationTest.kt\", \"CLAUDE.md\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"valkey tag verified\", \"redis property names verified against Boot 4.1 docs\", \"no main code or build changes\", \"16 tests green\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-07-03T12:00:00+08:00"
+  "lastUpdated": "2026-07-03T13:30:00+08:00"
 }
