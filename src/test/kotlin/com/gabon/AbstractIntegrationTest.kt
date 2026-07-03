@@ -23,10 +23,11 @@ abstract class AbstractIntegrationTest {
             "truncate ledger_entry, ledger_txn, outbox, inbox, account, refresh_token, admin_user, " +
                 "customer restart identity cascade",
         )
+        // 第三批引入 Redis 客户端后需在此 flush Valkey——单例容器跨测试复用，jti/计数键会残留
     }
 
     companion object {
-        // 单例容器：整个测试 JVM 复用一个 PG（不 stop，JVM 退出/Ryuk 回收）
+        // 单例容器：PG 与 Valkey 整个测试 JVM 复用（不 stop，JVM 退出/Ryuk 回收）
         @JvmStatic
         private val pg: PostgreSQLContainer =
             PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine")).apply { start() }
