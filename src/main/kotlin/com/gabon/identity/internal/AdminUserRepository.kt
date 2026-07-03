@@ -47,13 +47,24 @@ class AdminUserRepository(
         check(rows == 1) { "cannot save totp secret for absent/enabled admin $id" }
     }
 
-    /** confirm 启用:仅 `TOTP_ENABLED.eq(false)` 时置真;返回行数(0 = 已启用,调用方转 VALIDATION)。 */
-    fun enableTotp(id: Long): Int =
+    /**
+     * confirm 启用:仅"未启用 且 密文仍是 confirm 验证过的那份"时置真——`confirmedSecretEnc` 指纹守卫
+     * 关掉"confirm 在途被同 admin 再次 enroll 覆盖 secret → 启用被覆盖后新 secret 致 authenticator 锁死"
+     * 的竞态窗口。返回行数(0 = 已启用或密材已变,调用方转 VALIDATION)。
+     */
+    fun enableTotp(
+        id: Long,
+        confirmedSecretEnc: ByteArray,
+    ): Int =
         dsl
             .update(ADMIN_USER)
             .set(ADMIN_USER.TOTP_ENABLED, true)
-            .where(ADMIN_USER.ID.eq(id).and(ADMIN_USER.TOTP_ENABLED.eq(false)))
-            .execute()
+            .where(
+                ADMIN_USER.ID
+                    .eq(id)
+                    .and(ADMIN_USER.TOTP_ENABLED.eq(false))
+                    .and(ADMIN_USER.TOTP_SECRET_ENC.eq(confirmedSecretEnc)),
+            ).execute()
 
     /** TOTP 接受的并发语义(spec §5.4):命中 1 行才算验证成功,0 行 = 并发同 code / 重放旧 step。 */
     fun casConsumeStep(

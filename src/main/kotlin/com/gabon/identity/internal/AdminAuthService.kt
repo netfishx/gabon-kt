@@ -67,23 +67,33 @@ class AdminAuthService(
         return otpauthUri(admin.username, secret)
     }
 
-    /** confirm:解密未确认 secret → 窗口 ±1 验证 + CAS 消费 step → `totp_enabled=true`(已启用则 0 行 → VALIDATION)。 */
+    /**
+     * confirm:解密未确认 secret → 窗口 ±1 验证 + CAS 消费 step → `totp_enabled=true`。
+     * enable 用 confirm 验证过的**同一份密文**做指纹守卫(0 行 = 已启用 / 在途被覆盖 → VALIDATION),
+     * 杜绝"启用被并发 enroll 覆盖后的新 secret"致 authenticator 锁死。
+     */
     @Transactional
     fun confirm(
         adminId: Long,
         code: String,
     ) {
-        val secret = pendingSecret(adminId)
-        if (!verifier.verifyAndConsume(adminId, secret, code)) {
+        val pending = pendingSecret(adminId)
+        if (!verifier.verifyAndConsume(adminId, pending.secret, code)) {
             throw ProblemException(ProblemType.INVALID_CREDENTIALS, "totp confirm failed: $adminId")
         }
-        if (admins.enableTotp(adminId) != 1) {
-            throw ProblemException(ProblemType.VALIDATION, "totp already enabled: $adminId")
+        if (admins.enableTotp(adminId, pending.enc) != 1) {
+            throw ProblemException(ProblemType.VALIDATION, "totp already enabled or secret changed: $adminId")
         }
     }
 
-    /** 取回待确认的明文 secret:账号不存在 → 401;无待确认密材 → VALIDATION;解密失败上抛 fail fast。 */
-    private fun pendingSecret(adminId: Long): ByteArray {
+    /** 待确认密材:enc 密文(供 enable 指纹守卫)+ 解密明文(供窗口验证)同批返回,二者必须同源同事务读取。 */
+    private data class PendingSecret(
+        val enc: ByteArray,
+        val secret: ByteArray,
+    )
+
+    /** 取回待确认密材:账号不存在 → 401;无待确认密材 → VALIDATION;解密失败上抛 fail fast。 */
+    private fun pendingSecret(adminId: Long): PendingSecret {
         val admin =
             admins.findById(adminId)
                 ?: throw ProblemException(ProblemType.INVALID_CREDENTIALS, "admin gone: $adminId")
@@ -92,7 +102,7 @@ class AdminAuthService(
         if (enc == null || version == null) {
             throw ProblemException(ProblemType.VALIDATION, "no pending totp secret: $adminId")
         }
-        return crypto.decrypt(adminId, version, enc)
+        return PendingSecret(enc, crypto.decrypt(adminId, version, enc))
     }
 
     fun logout(principal: GabonPrincipal) {

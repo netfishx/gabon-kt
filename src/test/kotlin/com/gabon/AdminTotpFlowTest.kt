@@ -1,5 +1,6 @@
 package com.gabon
 
+import com.gabon.identity.internal.AdminUserRepository
 import com.gabon.identity.internal.Totp
 import com.gabon.identity.internal.TotpSecretCrypto
 import com.gabon.identity.internal.UsernameCanonicalizer
@@ -12,6 +13,7 @@ import com.gabon.platform.security.PrincipalType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.doAnswer
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -19,6 +21,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
 import org.springframework.http.MediaType
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -87,6 +90,10 @@ class AdminTotpFlowTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var clock: MutableClock
 
+    /** spy(默认透传真实实现):仅在覆盖竞态用例里对 findById 打桩,注入"读后被覆盖"的中途改写。 */
+    @MockitoSpyBean
+    lateinit var adminRepo: AdminUserRepository
+
     @BeforeEach
     fun resetClock() {
         clock.set(BASE_INSTANT)
@@ -134,6 +141,32 @@ class AdminTotpFlowTest : AbstractIntegrationTest() {
         repeat(MAX_FAILURES) { adminLogin("locky", PASSWORD, wrongCode(SEED)).andExpect(status().isUnauthorized) }
         // 锁定期内即使正确密码 + 正确 code 也 401
         adminLogin("locky", PASSWORD, codeNow(SEED)).andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun `confirm rejects when the enrolled secret is overwritten mid flight`() {
+        // M1 竞态:confirm 读并验证了 secretA 后,同 admin 第二次 enroll 覆盖成新密文才落库。
+        // 无指纹守卫时 enable 会启用被覆盖后的新 secret,authenticator 持 secretA 登录锁死;
+        // 守卫下 enable 只认 confirm 验证过的那份密文 → 0 行 → 400,启用不发生。
+        val id = insertAdmin("racer")
+        val token = adminToken(id)
+        val secret = secretOf(enroll(token)) // 落库 encA;URI 给出 secretA
+        val overwritten = crypto.encrypt(id, OTHER_SEED) // 并发第二次 enroll 的新密文
+        // 桩:confirm 的 findById 返回真实(encA)行后,才让新密文落库——精确落在读与 enable 之间的竞态窗口
+        doAnswer { invocation ->
+            val row = invocation.callRealMethod()
+            dsl
+                .update(ADMIN_USER)
+                .set(ADMIN_USER.TOTP_SECRET_ENC, overwritten)
+                .where(ADMIN_USER.ID.eq(id))
+                .execute()
+            row
+        }.`when`(adminRepo).findById(id)
+
+        confirm(token, codeNow(secret))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.type").value("/problems/validation"))
+        assertThat(totpEnabledOf(id)).isFalse() // 没启用错 secret
     }
 
     @Test
@@ -265,5 +298,8 @@ class AdminTotpFlowTest : AbstractIntegrationTest() {
 
         /** 20 字节任意 secret(RFC 6238 seed),测试直接持有明文以生成 code。 */
         private val SEED = "12345678901234567890".toByteArray()
+
+        /** 另一份明文,仅用于制造与 encA 不同的覆盖密文(内容无关,enable 守卫只比字节)。 */
+        private val OTHER_SEED = "abcdefghijklmnopqrst".toByteArray()
     }
 }
