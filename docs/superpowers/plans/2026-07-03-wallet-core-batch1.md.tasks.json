@@ -1,0 +1,33 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-03-wallet-core-batch1.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: V3 订单表迁移 + 表所有权登记",
+      "status": "pending",
+      "description": "**Goal:** 三张订单表(档位/充值单/提现单)DDL 落库,jOOQ codegen 产出类并完成表所有权登记与 truncate 列表登记。\n\n**Files:**\n- Create: src/main/resources/db/migration/V3__wallet_orders.sql\n- Modify: src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\n- Modify: src/test/kotlin/com/gabon/AbstractIntegrationTest.kt\n\n**Acceptance Criteria:**\n- V3 含 spec §2.2 全部 check 与索引\n- ModuleBoundaryTest 完整性断言登记前失败、登记后通过(key 为 jOOQ 类 simpleName)\n- ./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"files\": [\"src/main/resources/db/migration/V3__wallet_orders.sql\", \"src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\", \"src/test/kotlin/com/gabon/AbstractIntegrationTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"V3 ddl with all checks and indexes per spec 2.2\", \"table ownership registered as jooq simple names\", \"check green\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: V4 权限分离 + 双连接测试基建 + 守卫探针",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** gabon_app runtime role 与 migration owner 分离:V4 授权迁移、测试双连接(runtime=gabon_app / cleanup=owner)、权限与 trigger 探针。\n\n**Files:**\n- Create: src/main/resources/db/migration/V4__app_role_grants.sql\n- Create: src/test/kotlin/com/gabon/AppRoleGuardTest.kt\n- Modify: src/test/kotlin/com/gabon/AbstractIntegrationTest.kt\n- Modify: src/main/resources/application.yml\n\n**Acceptance Criteria:**\n- gabon_app 对 ledger 表 UPDATE/DELETE 被权限拒\n- 不平分录提交时被 deferred trigger 拒\n- 全部既有测试在 gabon_app 下通过\n- Flyway 走 owner 连接,truncate 走 ownerDsl\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"files\": [\"src/main/resources/db/migration/V4__app_role_grants.sql\", \"src/test/kotlin/com/gabon/AppRoleGuardTest.kt\", \"src/test/kotlin/com/gabon/AbstractIntegrationTest.kt\", \"src/main/resources/application.yml\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"app role update/delete on ledger tables denied\", \"unbalanced insert rejected at commit\", \"full suite green under gabon_app\", \"flyway on owner connection\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: WalletLedgerApi + LedgerService 骨架重构",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** 语义化写 API 落地,creditRecharge 迁入统一骨架(幂等门 → 开户 → 投影 → postEntries 漏斗),新增 INSUFFICIENT_BALANCE problem 与 frozenOf 读口。\n\n**Files:**\n- Create: src/main/kotlin/com/gabon/wallet/api/WalletLedgerApi.kt\n- Modify: src/main/kotlin/com/gabon/wallet/api/WalletBalanceApi.kt\n- Modify: src/main/kotlin/com/gabon/platform/web/ProblemType.kt\n- Modify: src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt\n- Modify: src/test/kotlin/com/gabon/RechargeIdempotencyTest.kt\n- Modify: src/test/kotlin/com/gabon/InsufficientBalanceTest.kt\n\n**Acceptance Criteria:**\n- creditRecharge(orderNo, customerId, diamonds) 签名生效\n- 同 biz_no 异金额重放 → false 且账务不变\n- postEntries 唯一生产入口,写前断言 ≥2 行且 Σ=0\n- frozenOf 契约同 balanceOf\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"files\": [\"src/main/kotlin/com/gabon/wallet/api/WalletLedgerApi.kt\", \"src/main/kotlin/com/gabon/wallet/api/WalletBalanceApi.kt\", \"src/main/kotlin/com/gabon/platform/web/ProblemType.kt\", \"src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt\", \"src/test/kotlin/com/gabon/RechargeIdempotencyTest.kt\", \"src/test/kotlin/com/gabon/InsufficientBalanceTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"new signature with leading idempotency key\", \"different-amount replay is no-op\", \"postEntries sole entry funnel with sum assertion\", \"frozenOf returns 0 for missing account\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: 四写方法 + 并发幂等矩阵 + 不变量工具",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** 补齐 freeze/settle/release/grant(含 guardedDebit),交付并发/幂等测试矩阵与全量不变量断言工具。\n\n**Files:**\n- Modify: src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt\n- Create: src/test/kotlin/com/gabon/LedgerInvariants.kt\n- Create: src/test/kotlin/com/gabon/WalletLedgerFlowTest.kt\n\n**Acceptance Criteria:**\n- 四方法全部走 post() 骨架,守卫侧 guardedDebit\n- 并发双 freeze 恰一成功,败方 INSUFFICIENT_BALANCE\n- 并发同 biz_no 双 credit 恰一入账\n- 五方法重放各 false 且账务不变\n- 每测试终局 LedgerInvariants.assertHolds\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"files\": [\"src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt\", \"src/test/kotlin/com/gabon/LedgerInvariants.kt\", \"src/test/kotlin/com/gabon/WalletLedgerFlowTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"four write methods through post skeleton with guardedDebit\", \"concurrent double freeze exactly one winner\", \"concurrent same-bizno credit posts once\", \"all five methods replay as no-op\", \"invariants hold at end of every test\"], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-03"
+}
