@@ -27,6 +27,10 @@
 3. **WalletProps 定案**:保留——消费方是子项目 2 充值域(汇率换算),KDoc 注明;不删除(第一批质量审查 Minor 收口)。
 4. **jti 用 UUIDv7**(spec §5.2):JDK 无内置,按 RFC 9562 自实现 ~15 行(48-bit unix ms + version/variant + random),带单测。
 5. **base32**(otpauth URI 需要):JDK 无内置,RFC 4648 自实现 ~20 行,带单测;不为此引 commons-codec。
+6. **限流/锁定为固定窗口(spec §5.3 已同步回填)**:计数一律 Lua 脚本**原子 INCR+PEXPIRE**(杜绝 INCR 成功后 EXPIRE 失败留下永久 key → 永久锁定/限流);IP 限流由"滑动窗口"改定为固定窗口——边界突发最坏 2×limit,对登录保护足够,换实现最简。
+7. **黑名单票立即拒**:携带已吊销 jti 的请求在过滤器层直接 401 并短路,**公开路由也不放行**(吊销票再现 = 强可疑信号)。
+8. **黑名单 TTL = 票的剩余有效期**(spec §5.2 原文;不是完整 access TTL):`GabonPrincipal` 携带 `expiresAt`,剩余 ≤0 不入黑名单。
+9. **otpauth URI 必须编码**:label percent-encoding、secret Base32 去 padding(otpauth 惯例),用户名含空格/冒号/@ 也生成合法 URI。
 
 ---
 
@@ -268,7 +272,7 @@ EOF
 **Acceptance Criteria:**
 - [ ] 未带票访问任意路径 → 401 `/problems/unauthenticated`;actuator health 公开可达(platform 自己的 contributor)
 - [ ] `AccessTokenCodec` 签发/校验往返:claims 含 sub/typ/roles/jti(UUIDv7)/sid/iat/exp(15 分钟默认,配置化);篡改/过期 token 校验失败
-- [ ] 黑名单 jti 的有效 token → 401;**Valkey 不可用时带票请求 → 503**(fail-closed,过滤器层)
+- [ ] 黑名单 jti 的 token → **无论目标路由是否公开一律 401**(过滤器立即拒绝短路);**Valkey 不可用时带票请求 → 503**(fail-closed,过滤器层)
 - [ ] UUIDv7:version 位 = 7、variant 位 = 10、时间戳单调(单测)
 - [ ] `JwtProps` secret 来源二选一,双设/双缺启动即失败(fail fast)
 - [ ] `./gradlew check` 全绿
@@ -323,12 +327,13 @@ enum class PrincipalType(val code: Short, val role: String) {
     }
 }
 
-/** 过滤器解出的已认证主体(sid = refresh family,logout 凭它吊销;spec §5.2)。 */
+/** 过滤器解出的已认证主体(sid = refresh family,logout 凭它吊销;expiresAt 供黑名单剩余 TTL;spec §5.2)。 */
 data class GabonPrincipal(
     val id: Long,
     val type: PrincipalType,
     val sid: UUID,
     val jti: String,
+    val expiresAt: java.time.Instant,
 )
 ```
 
@@ -398,6 +403,7 @@ class AccessTokenCodec(
                 type = PrincipalType.of((claims["typ"] as Number).toShort()),
                 sid = UUID.fromString(claims["sid"] as String),
                 jti = claims.id,
+                expiresAt = claims.expiration.toInstant(),
             )
         } catch (e: JwtException) {
             null
@@ -479,12 +485,15 @@ class JwtAuthFilter(
                 writeProblem(response, ProblemType.AUTH_STORE_UNAVAILABLE)
                 return
             }
-        if (!revoked) {
-            val auth = UsernamePasswordAuthenticationToken(
-                principal, null, listOf(SimpleGrantedAuthority(principal.type.role)),
-            )
-            SecurityContextHolder.getContext().authentication = auth
+        if (revoked) {
+            // 吊销票再现 = 强可疑信号:立即拒,公开路由也不放行(计划注记 7)
+            writeProblem(response, ProblemType.UNAUTHENTICATED)
+            return
         }
+        val auth = UsernamePasswordAuthenticationToken(
+            principal, null, listOf(SimpleGrantedAuthority(principal.type.role)),
+        )
+        SecurityContextHolder.getContext().authentication = auth
         chain.doFilter(request, response)
     }
 
@@ -584,7 +593,7 @@ class SecurityConfig {
 - GET `/v1/whatever` 无票 → 401 + `$.type == "/problems/unauthenticated"`
 - GET `/actuator/health` 无票 → 200
 - codec.issue 出票 → GET `/v1/whatever` 带票 → 404(过链,无该路由)——证明认证生效
-- blacklist.revoke(jti) 后同票 → 401
+- blacklist.revoke(jti) 后同票 → 401(**受保护路由与公开路由 `/actuator/health` 各测一次**——公开路由也不放行吊销票)
 (MockMvc JSON 断言 `jsonPath`。)
 
 - [ ] **Step 7: check 全绿 → Commit**
@@ -814,7 +823,7 @@ EOF
 - [ ] 旋转 = 原子 `UPDATE ... WHERE token_hash=? AND rotated_at IS NULL AND revoked_at IS NULL AND expires_at > now()`(jOOQ DSL,`.eq()/.isNull/.gt()`,DB 时钟 `DSL.currentOffsetDateTime()`),命中 1 行才发新对
 - [ ] 0 行且 hash 存在 → 重放 → **吊销整个 family** 后抛统一 401;0 行且不存在 → 统一 401
 - [ ] **并发双 refresh 同一旧 token 仅一方成功**(双线程 CountDownLatch,风格同 OutboxLeaseTest)
-- [ ] logout(sid) 吊销 family + jti 进黑名单;revokeAll(principal) 吊销全部 family
+- [ ] logout(sid) 吊销 family + jti 进黑名单(**TTL = 票的剩余有效期,过期票不入**);revokeAll(principal) 吊销全部 family(同 TTL 语义)
 - [ ] refresh 明文只存在于返回值;库中仅 SHA-256(32B);TTL 30 天(配置化 `gabon.security.refresh.ttl`)
 - [ ] `./gradlew check` 全绿
 
@@ -951,14 +960,20 @@ class TokenService(
         return issueInFamily(row.familyId, row.principalType, row.principalId, ip, userAgent)
     }
 
-    fun logout(sid: UUID, jti: String) {
+    fun logout(sid: UUID, jti: String, expiresAt: Instant) {
         repo.revokeFamily(sid)
-        blacklist.revoke(jti, codec.accessTtl())
+        blacklistRemaining(jti, expiresAt)
     }
 
-    fun revokeAll(type: PrincipalType, principalId: Long, currentJti: String) {
+    fun revokeAll(type: PrincipalType, principalId: Long, currentJti: String, expiresAt: Instant) {
         repo.revokeAllFor(type, principalId)
-        blacklist.revoke(currentJti, codec.accessTtl())
+        blacklistRemaining(currentJti, expiresAt)
+    }
+
+    /** 黑名单 TTL = 票的剩余有效期(spec §5.2 原文,非完整 access TTL);已过期不入。 */
+    private fun blacklistRemaining(jti: String, expiresAt: Instant) {
+        val remaining = Duration.between(clock.instant(), expiresAt)
+        if (!remaining.isNegative && !remaining.isZero) blacklist.revoke(jti, remaining)
     }
 
     private fun issueInFamily(
@@ -1032,7 +1047,7 @@ EOF
 
 **Acceptance Criteria:**
 - [ ] register:canonical 唯一(重复 → 409 `/problems/username-taken`);邀请码可选,提供但无效 → 400;新用户生成 10 位 A-Z2-7 邀请码(unique 冲突重试 ≤5);成功即返 TokenPair
-- [ ] login:IP 限流(默认 30 次/10 分钟,可配)→ 429;账号锁定(5 次失败/15 分钟,可配)→ **锁定期内正确密码也 401**;失败/成功计数 Valkey 原子 INCR/DEL;**不存在的用户与密码错返回逐字节相同的 401 body**
+- [ ] login:IP 限流(固定窗口 30 次/10 分钟,可配)→ 429;账号锁定(5 次失败/15 分钟,可配)→ **锁定期内正确密码也 401**;失败/IP 计数一律 **Lua 原子 INCR+PEXPIRE**(禁 INCR 后再 EXPIRE 两步);**不存在的用户与密码错返回逐字节相同的 401 body**
 - [ ] logout:凭 access 的 sid 吊销 family(无需提交 refresh),该 family 的 refresh 之后 401;jti 黑名单生效(旧 access 再访问 → 401)
 - [ ] changePassword:验旧密→改 hash→revokeAll+黑名单当前 jti(其它 session 全失效)
 - [ ] Valkey 停机语义:带票请求 → 503(过滤器);登录 → 503(计数器异常经 handler)——`ValkeyDownTest` 用独立坏端口上下文验证
@@ -1080,16 +1095,29 @@ data class LoginProtectionProps(
     val ipWindow: Duration = Duration.ofMinutes(10),
 )
 
-/** 登录保护(spec §5.3):Valkey 计数;异常上抛 = fail-closed(handler 出 503)。 */
+/**
+ * 登录保护(spec §5.3):固定窗口计数,Lua 脚本原子 INCR+PEXPIRE——
+ * 杜绝"INCR 成功后 EXPIRE 失败留下永久 key"导致的永久锁定/限流(计划注记 6)。
+ * Valkey 异常上抛 = fail-closed(handler 出 503)。
+ */
 @Component
 class LoginProtection(
     private val redis: StringRedisTemplate,
     private val props: LoginProtectionProps,
 ) {
+    // RedisScript 执行签名以 Spring Data Redis 当前文档为准(计划注记 1)
+    private val incrWithTtl =
+        DefaultRedisScript(
+            """
+            local c = redis.call('INCR', KEYS[1])
+            if c == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+            return c
+            """.trimIndent(),
+            Long::class.java,
+        )
+
     fun checkIpLimit(ip: String) {
-        val key = "auth:ip:$ip"
-        val count = redis.opsForValue().increment(key)!!
-        if (count == 1L) redis.expire(key, props.ipWindow)
+        val count = redis.execute(incrWithTtl, listOf("auth:ip:$ip"), props.ipWindow.toMillis().toString())!!
         if (count > props.ipLimit) throw ProblemException(ProblemType.RATE_LIMITED, "ip=$ip count=$count")
     }
 
@@ -1101,9 +1129,7 @@ class LoginProtection(
     }
 
     fun onFailure(scope: String, canonical: String) {
-        val key = key(scope, canonical)
-        val count = redis.opsForValue().increment(key)!!
-        if (count == 1L) redis.expire(key, props.lockDuration)
+        redis.execute(incrWithTtl, listOf(key(scope, canonical)), props.lockDuration.toMillis().toString())
     }
 
     fun onSuccess(scope: String, canonical: String) {
@@ -1206,7 +1232,7 @@ EOF
 
 **Acceptance Criteria:**
 - [ ] admin login:未启用 TOTP → 密码即发对;已启用 → totpCode 缺失/错误 → 统一 401(**TOTP 失败计入锁定计数**);正确 → 发对
-- [ ] enroll(需 ADMIN token):生成 20B secret → AES-GCM 加密落库(enabled 保持 false,可重复 enroll 覆盖未确认 secret)→ 返回 otpauth URI(`otpauth://totp/gabon-admin:{username}?secret={base32}&issuer=gabon&algorithm=SHA1&digits=6&period=30`)
+- [ ] enroll(需 ADMIN token):生成 20B secret → AES-GCM 加密落库(enabled 保持 false,可重复 enroll 覆盖未确认 secret)→ 返回 otpauth URI:label `gabon-admin:{username}` **percent-encoded**(URLEncoder UTF-8 且 `+`→`%20`),secret Base32 **去 padding**(otpauth 惯例),形如 `otpauth://totp/{encodedLabel}?secret={b32}&issuer=gabon&algorithm=SHA1&digits=6&period=30`;**用户名含空格/冒号/@ 也生成合法 URI(测试断言无裸空格、无 '=')**
 - [ ] confirm:解密 secret → 窗口 ±1 验证 + **CAS 消费 step**(命中 1 行才通过)→ `UPDATE ... SET totp_enabled=true WHERE id=? AND totp_enabled=false`
 - [ ] **同 step 重放拒绝**:同一 code 第二次提交(confirm 或 login)→ 401;窗口内前一 step 的旧 code 在新 step 被接受后 → 401(单调性)
 - [ ] `/v1/admin/auth/*` 除 login 外都要 ROLE_ADMIN(customer token 访问 → 403)
@@ -1261,7 +1287,7 @@ class TotpVerifier(
 }
 ```
 
-- [ ] **Step 3: AdminAuthService.kt + AdminAuthController.kt**:login(checkIpLimit → assertNotLocked(scope="admin") → findAuth → 密码验证(失败 onFailure+401)→ 若 totp_enabled:code 缺失→onFailure+401;decrypt(id, key_version, enc) → verifyAndConsume 失败→onFailure+401 → onSuccess → issuePair(ADMIN))、enroll(20B SecureRandom → encrypt → saveTotpSecret → otpauth URI 含 Base32.encode(secret))、confirm(decrypt → verifyAndConsume → enableTotp 0 行→VALIDATION)。Controller:`/v1/admin/auth/{login,logout,totp/enroll,totp/confirm}`;logout 复用 TokenService.logout。
+- [ ] **Step 3: AdminAuthService.kt + AdminAuthController.kt**:login(checkIpLimit → assertNotLocked(scope="admin") → findAuth → 密码验证(失败 onFailure+401)→ 若 totp_enabled:code 缺失→onFailure+401;decrypt(id, key_version, enc) → verifyAndConsume 失败→onFailure+401 → onSuccess → issuePair(ADMIN))、enroll(20B SecureRandom → encrypt → saveTotpSecret → otpauth URI:`val secretB32 = Base32.encode(secret).trimEnd('=')`;`val label = URLEncoder.encode("gabon-admin:$username", StandardCharsets.UTF_8).replace("+", "%20")`;拼 `otpauth://totp/$label?secret=$secretB32&issuer=gabon&algorithm=SHA1&digits=6&period=30`)、confirm(decrypt → verifyAndConsume → enableTotp 0 行→VALIDATION)。Controller:`/v1/admin/auth/{login,logout,totp/enroll,totp/confirm}`;logout 复用 TokenService.logout。
 
 - [ ] **Step 4: AdminTotpFlowTest.kt**(MockMvc + 可控时钟):`@TestConfiguration` 提供可变 Clock(`MutableClock` 包装 `Instant` 可 set,`@Primary`),测试直接用 dsl 插 admin 行(bcrypt hash 经 PasswordEncoder 生成):
 - 未启用:login(密码)→ 对
