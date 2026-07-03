@@ -39,7 +39,7 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-25.jdk/Contents/Home
 # OrbStack + Testcontainers:必须显式指向 socket(本机相关,换机器需改)
 export DOCKER_HOST=unix:///Users/ethanwang/.orbstack/run/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
-./gradlew check            # codegen + 编译 + ktlint + detekt + 16 测试(CI 主入口)
+./gradlew check            # codegen + 编译 + ktlint + detekt + 76 测试(CI 主入口)
 
 ./gradlew test --tests "com.gabon.RechargeIdempotencyTest"   # 跑单个测试类(需同样的 Docker 环境变量)
 ./gradlew ktlintFormat     # 格式自动修复
@@ -86,6 +86,7 @@ src/main/kotlin/com/gabon/       ← 包根 com.gabon(GabonApplication 为入口
   wallet/     钱包与账本(internal/ledger:双分录、幂等、守卫、AccountKind forced type)
   identity/ recharge/ withdraw/ reward/ content/ media/ moderation/ reporting/
               九上下文格子,各含 {api,internal};content/internal/feed 为 suspend 编排层
+              identity 已落地:鉴权/token 生命周期/admin TOTP(第三批)
 src/main/resources/db/migration/ Flyway 迁移(schema 唯一真相)
 src/test/.../ArchitectureTest.kt ArchUnit 持久层/协程边界断言
 src/test/.../ModuleBoundaryTest.kt 模块边界断言(方向白名单、表所有权)

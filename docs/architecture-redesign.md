@@ -494,6 +494,9 @@ dsl.select(ACCOUNT.ID, ACCOUNT.BALANCE, coalesce(sum(LEDGER_ENTRY.AMOUNT), 0L).a
 
 - **密钥管理（硬规则，第一期）**：统一用 **SOPS+age**。密文配置可入库；明文**只在部署时解密**并以**只读 secret 文件**注入容器（挂载 `/run/secrets/*`，应用从文件读取，不走环境变量）；**禁止明文密钥进入 Git、镜像、日志、CI 输出、应用配置文件**。OpenBao 不进第一期，仅在出现动态凭证/租约/集中审计/跨团队密钥自助发放需求时作为二期升级目标。运维约束：① age 私钥只放部署机 / CI secret store，**不进 repo**；② 解密产物不写入镜像，挂 `/run/secrets/*`；③ 轮换要有 **runbook**（改密文 → 部署 → 验证 → 撤旧）；④ 生产**禁止全量打印 env**（环境变量与 secret path 都可能泄密）。
 - **后台 2FA**：admin 登录强制二次验证。
+
+> **TOTP 实施定案(2026-07,迁移子项目 1 第三批)**:RFC 6238,JDK Mac 自实现(不自创算法);生产参数 30s 步长 / 6 位 / HMAC-SHA1 / 验证窗口 [-1,0,+1](算法函数以 digits 参数化,RFC Appendix B 向量按 8 位验算法)。secret 应用层加密:AES-256-GCM,IV 12B 随机,tag 128b,AAD 绑定 `admin_user:{id}:totp_secret:{key_version}`,KEK 注入不进 git。防重放:`totp_last_used_step` 原子 CAS 单调递增,命中 1 行才通过。鉴权错误对外统一 401 `/problems/invalid-credentials` 防枚举(锁定/禁用/TOTP 错不区分);username 以 canonical(trim+lowercase ROOT)唯一。设计全文见 `docs/superpowers/specs/2026-07-02-module-boundaries-identity-design.md`。
+
 - **内部调用**：目标态是模块化单体，admin↔service 是**进程内模块调用，不走内部 HTTP**——从根上消除内部鉴权面。**仅迁移期**旧双应用并存时，旧 internal API 用 **HMAC 签名**（替代明文共享密钥头 + 常量时间比较）过渡；mTLS 为二期。
 - **JWT 可吊销**：引入 `jti` + 黑名单存储（Valkey），修旧版"令牌永不过期 + logout 空操作"。
 - **账号锁定 + 限流**：登录/发码/关键写接口限流（Caddy 层 + 应用层），失败锁定。

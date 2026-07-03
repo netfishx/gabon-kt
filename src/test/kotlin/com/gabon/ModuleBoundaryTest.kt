@@ -201,6 +201,20 @@ class ModuleBoundaryTest {
         check(unregistered.isEmpty()) { "jOOQ 表未在 TABLE_OWNER 登记归属:$unregistered(spec §4 规则 6:新迁移必须登记)" }
     }
 
+    /**
+     * 根包白名单:com.gabon 根包只许启动装配(GabonApplication/GabonApplicationKt);
+     * 散落根包的类不落任何上下文格子,是边界规则盲区(WalletProps 教训;第二批终审 Minor #2)。
+     */
+    @Test
+    fun `root package only hosts application bootstrap`() {
+        classes()
+            .that()
+            .resideInAPackage("com.gabon")
+            .should()
+            .haveSimpleNameStartingWith("GabonApplication")
+            .check(classes)
+    }
+
     /** 格子形状:上下文包内的类必须位于 api.. 或 internal..——根包散类是边界规则的盲区(第一批终审 Important #1) */
     @Test
     fun `context classes reside in api or internal`() {
