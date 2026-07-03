@@ -8,9 +8,15 @@ import com.gabon.identity.internal.web.TokenPairResponse
 import com.gabon.jooq.tables.references.CUSTOMER
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers.any
+import org.mockito.Mockito.clearInvocations
+import org.mockito.Mockito.times
+import org.mockito.Mockito.verify
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
+import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
@@ -29,6 +35,10 @@ class AuthFlowTest : AbstractIntegrationTest() {
 
     @Autowired
     lateinit var objectMapper: ObjectMapper
+
+    /** spy(透传真实实现):等功耗用例数 matches 调用次数,替代 flaky 的 wall-clock 断言。 */
+    @MockitoSpyBean
+    lateinit var passwordEncoder: PasswordEncoder
 
     @Test
     fun `register then login then me returns the display username`() {
@@ -95,6 +105,16 @@ class AuthFlowTest : AbstractIntegrationTest() {
         login("dave", PASSWORD).andExpect(status().isUnauthorized) // 锁定期内正确密码也 401
         redisConnectionFactory.connection.use { it.serverCommands().flushDb() } // 等价锁过期
         login("dave", PASSWORD).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `locked account login still pays one bcrypt so lock state is not timing probeable`() {
+        register("locko")
+        repeat(MAX_FAILURES) { login("locko", "wrongpassword").andExpect(status().isUnauthorized) }
+        clearInvocations(passwordEncoder)
+        login("locko", PASSWORD).andExpect(status().isUnauthorized)
+        // 等功耗:锁定路径与未知用户/密码错路径同付一次 bcrypt,锁定态不因响应更快被计时探测
+        verify(passwordEncoder, times(1)).matches(any(), any())
     }
 
     @Test

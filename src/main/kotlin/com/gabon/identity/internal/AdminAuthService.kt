@@ -41,7 +41,11 @@ class AdminAuthService(
     ): TokenPair {
         val canonical = UsernameCanonicalizer.canonicalize(username)
         protection.checkIpLimit(ip)
-        protection.assertNotLocked(SCOPE_ADMIN, canonical)
+        if (protection.isLocked(SCOPE_ADMIN, canonical)) {
+            // 等功耗:锁定路径也付一次 bcrypt(结果丢弃),锁定态不因响应更快被计时探测;不计失败计数(维持原语义)
+            passwordEncoder.matches(password, dummyHash)
+            reject(canonical, "locked", countFailure = false)
+        }
         val auth = admins.findAuthByCanonical(canonical)
         if (auth == null) {
             // 等功耗:未知账号也付一次 bcrypt 代价,消除"跳过 matches"暴露的计时侧信道(结果丢弃)。
@@ -56,14 +60,19 @@ class AdminAuthService(
         return tokens.issuePair(PrincipalType.ADMIN, auth.id, ip, userAgent)
     }
 
-    /** enroll(需 ADMIN token):生成 20B secret → 加密落库(enabled 保持 false,可重复覆盖未确认 secret)→ 返回 otpauth URI。 */
+    /**
+     * enroll(需 ADMIN token):生成 20B secret → 加密落库(enabled 保持 false,可重复覆盖未确认 secret)→ 返回 otpauth URI。
+     * 已启用再 enroll → VALIDATION(靠落库 0 行判定,同时兜住"读后被并发 confirm 启用"的竞态)。
+     */
     @Transactional
     fun enroll(adminId: Long): String {
         val admin =
             admins.findById(adminId)
                 ?: throw ProblemException(ProblemType.INVALID_CREDENTIALS, "admin gone: $adminId")
         val secret = ByteArray(SECRET_BYTES).also { random.nextBytes(it) }
-        admins.saveTotpSecret(adminId, crypto.encrypt(adminId, secret), crypto.keyVersion)
+        if (admins.saveTotpSecret(adminId, crypto.encrypt(adminId, secret), crypto.keyVersion) != 1) {
+            throw ProblemException(ProblemType.VALIDATION, "totp already enabled: $adminId")
+        }
         return otpauthUri(admin.username, secret)
     }
 

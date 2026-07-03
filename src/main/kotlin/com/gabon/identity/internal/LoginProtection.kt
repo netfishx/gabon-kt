@@ -29,8 +29,8 @@ data class LoginProtectionProps(
 /**
  * 登录保护(spec §5.3):固定窗口计数,Lua 脚本原子 INCR+PEXPIRE——杜绝"INCR 成功后 PEXPIRE 失败
  * 留下永久 key"导致的永久锁定/限流。所有 redis 调用经 store{} 包装为 AuthStoreUnavailableException
- * = fail-closed(同 JtiBlacklist 模式,覆盖连接失败/命令超时;handler 出 503)。
- * ProblemException(RATE_LIMITED/锁定)在 store 块外抛出,不受包装影响。
+ * = fail-closed(同 TokenRevocationStore 模式,覆盖连接失败/命令超时;handler 出 503)。
+ * ProblemException(RATE_LIMITED)在 store 块外抛出,不受包装影响;锁定不在此抛,见 isLocked。
  */
 @Component
 class LoginProtection(
@@ -45,15 +45,17 @@ class LoginProtection(
         if (count > props.ipLimit) throw ProblemException(ProblemType.RATE_LIMITED, "ip=$ip count=$count")
     }
 
-    /** 锁定探测:失败计数达阈值即拒(锁定期内正确密码也 401,防枚举与暴破)。 */
-    fun assertNotLocked(
+    /**
+     * 锁定探测:失败计数达阈值即锁(锁定期内正确密码也 401,防枚举与暴破)。
+     * 只回答是否锁定,不抛 401——调用方须先做 bcrypt 等功耗对齐再统一拒绝,
+     * 否则锁定路径比其它失败路径快约一次 bcrypt,锁定态可被计时探测。
+     */
+    fun isLocked(
         scope: String,
         canonical: String,
-    ) {
+    ): Boolean {
         val count = store { redis.opsForValue().get(failKey(scope, canonical)) }?.toLong() ?: 0L
-        if (count >= props.maxFailures) {
-            throw ProblemException(ProblemType.INVALID_CREDENTIALS, "locked scope=$scope user=$canonical")
-        }
+        return count >= props.maxFailures
     }
 
     /** 失败自增:窗口 = lockDuration,过期即解锁(只前滚,无手动清零)。 */

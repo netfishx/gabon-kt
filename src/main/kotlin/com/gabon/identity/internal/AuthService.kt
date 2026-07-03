@@ -56,7 +56,11 @@ class AuthService(
     ): TokenPair {
         val canonical = UsernameCanonicalizer.canonicalize(username)
         protection.checkIpLimit(ip)
-        protection.assertNotLocked(SCOPE_CUSTOMER, canonical)
+        if (protection.isLocked(SCOPE_CUSTOMER, canonical)) {
+            // 等功耗:锁定路径也付一次 bcrypt(结果丢弃),锁定态不因响应更快被计时探测;不计失败计数(维持原语义)
+            passwordEncoder.matches(password, dummyHash)
+            rejectLogin(canonical, "locked", countFailure = false)
+        }
         val auth = customers.findAuthByCanonical(canonical)
         if (auth == null) {
             // 等功耗:未知用户也付一次 bcrypt 代价,消除"跳过 matches"暴露的计时侧信道(结果丢弃)。

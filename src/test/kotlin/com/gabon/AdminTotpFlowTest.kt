@@ -13,7 +13,11 @@ import com.gabon.platform.security.PrincipalType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers.any
+import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.doAnswer
+import org.mockito.Mockito.times
+import org.mockito.Mockito.verify
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -78,7 +82,8 @@ class AdminTotpFlowTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var objectMapper: ObjectMapper
 
-    @Autowired
+    /** spy(透传真实实现):等功耗用例数 matches 调用次数,替代 flaky 的 wall-clock 断言。 */
+    @MockitoSpyBean
     lateinit var passwordEncoder: PasswordEncoder
 
     @Autowired
@@ -144,6 +149,16 @@ class AdminTotpFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `locked admin login still pays one bcrypt so lock state is not timing probeable`() {
+        insertAdminWithTotp("timelock")
+        repeat(MAX_FAILURES) { adminLogin("timelock", "wrongpassword").andExpect(status().isUnauthorized) }
+        clearInvocations(passwordEncoder)
+        adminLogin("timelock", PASSWORD, codeNow(SEED)).andExpect(status().isUnauthorized)
+        // 等功耗:锁定路径与未知账号/密码错路径同付一次 bcrypt,锁定态不因响应更快被计时探测
+        verify(passwordEncoder, times(1)).matches(any(), any())
+    }
+
+    @Test
     fun `confirm rejects when the enrolled secret is overwritten mid flight`() {
         // M1 竞态:confirm 读并验证了 secretA 后,同 admin 第二次 enroll 覆盖成新密文才落库。
         // 无指纹守卫时 enable 会启用被覆盖后的新 secret,authenticator 持 secretA 登录锁死;
@@ -167,6 +182,17 @@ class AdminTotpFlowTest : AbstractIntegrationTest() {
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.type").value("/problems/validation"))
         assertThat(totpEnabledOf(id)).isFalse() // 没启用错 secret
+    }
+
+    @Test
+    fun `enroll after totp enabled is a validation error not a 500`() {
+        // 已启用 2FA 的合法 admin 再点一次 enroll:业务态 400,而非 check() 炸 IllegalStateException → 500
+        val id = insertAdminWithTotp("reenroller")
+        mockMvc
+            .perform(post("/v1/admin/auth/totp/enroll").header(AUTH, "Bearer ${adminToken(id)}"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.type").value("/problems/validation"))
+        assertThat(totpEnabledOf(id)).isTrue() // 已启用态不被破坏
     }
 
     @Test

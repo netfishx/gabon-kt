@@ -29,23 +29,21 @@ class AdminUserRepository(
     fun findById(id: Long): AdminAuthRow? = selectAuth().where(ADMIN_USER.ID.eq(id)).fetchOne()?.let(::toAuthRow)
 
     /**
-     * enroll 落库:仅当尚未启用(`TOTP_ENABLED.eq(false)`)允许写/覆盖未确认 secret;
-     * 命中 0 行(账号不存在或已启用)= 非法覆盖,fail fast 暴露。
+     * enroll 落库:仅当尚未启用(`TOTP_ENABLED.eq(false)`)允许写/覆盖未确认 secret。
+     * 返回行数:0 = 已启用或账号消失——"已启用再 enroll"是合法可达的用户操作,非内部不变量,
+     * 由调用方转业务态错误(update 行数判定而非先读后写,天然兜住并发 confirm 竞态)。
      */
     fun saveTotpSecret(
         id: Long,
         enc: ByteArray,
         keyVersion: Short,
-    ) {
-        val rows =
-            dsl
-                .update(ADMIN_USER)
-                .set(ADMIN_USER.TOTP_SECRET_ENC, enc)
-                .set(ADMIN_USER.TOTP_KEY_VERSION, keyVersion)
-                .where(ADMIN_USER.ID.eq(id).and(ADMIN_USER.TOTP_ENABLED.eq(false)))
-                .execute()
-        check(rows == 1) { "cannot save totp secret for absent/enabled admin $id" }
-    }
+    ): Int =
+        dsl
+            .update(ADMIN_USER)
+            .set(ADMIN_USER.TOTP_SECRET_ENC, enc)
+            .set(ADMIN_USER.TOTP_KEY_VERSION, keyVersion)
+            .where(ADMIN_USER.ID.eq(id).and(ADMIN_USER.TOTP_ENABLED.eq(false)))
+            .execute()
 
     /**
      * confirm 启用:仅"未启用 且 密文仍是 confirm 验证过的那份"时置真——`confirmedSecretEnc` 指纹守卫
