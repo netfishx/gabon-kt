@@ -182,11 +182,11 @@ class GlobalExceptionHandler {
 
     /**
      * Valkey 鉴权基础设施不可用 → fail-closed 503(spec §5.2)。
-     * **只认 Redis 专属异常**:jOOQ 经 Spring 翻译的 PG 异常同为 DataAccessException,
-     * 不得冒充 auth-store 故障——PG 侧异常落兜底 500(spec §6 fail fast;Task 1 质量审查收窄)。
+     * 只认 AuthStoreUnavailableException:包装发生在 Redis 专属组件(JtiBlacklist/LoginProtection)内,
+     * 超时/连接失败/系统异常全覆盖,PG 侧异常不可能进来(落兜底 500,spec §6 fail fast)。
      */
-    @ExceptionHandler(RedisConnectionFailureException::class, RedisSystemException::class)
-    fun handleAuthStoreDown(e: DataAccessException): ResponseEntity<ProblemDetail> {
+    @ExceptionHandler(AuthStoreUnavailableException::class)
+    fun handleAuthStoreDown(e: AuthStoreUnavailableException): ResponseEntity<ProblemDetail> {
         log.error("auth store unavailable", e)
         return ResponseEntity
             .status(ProblemType.AUTH_STORE_UNAVAILABLE.status)
@@ -429,14 +429,26 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
 import java.time.Duration
 
-/** jti 黑名单:Valkey 异常一律上抛 = fail-closed(过滤器转 503;spec §5.2 定案)。 */
+/** 鉴权存储(Valkey)不可用的统一包装:在 Redis 专属组件内 catch 宽基类是安全的(不可能混入 PG)。 */
+class AuthStoreUnavailableException(cause: Throwable) : RuntimeException("auth store unavailable", cause)
+
+/**
+ * jti 黑名单:任何 Redis 故障形态(连接失败/系统异常/**命令超时 QueryTimeoutException**)
+ * 都在源头包装为 AuthStoreUnavailableException = fail-closed(过滤器/advice 转 503;
+ * 直接在外层 catch Redis 异常对会漏超时——它与 PG 超时同类,Task 2 质量审查定案)。
+ */
 @Component
 class JtiBlacklist(private val redis: StringRedisTemplate) {
-    fun revoke(jti: String, ttl: Duration) {
-        redis.opsForValue().set(key(jti), "1", ttl)
-    }
+    fun revoke(jti: String, ttl: Duration) = store { redis.opsForValue().set(key(jti), "1", ttl) }
 
-    fun isRevoked(jti: String): Boolean = redis.hasKey(key(jti))
+    fun isRevoked(jti: String): Boolean = store { redis.hasKey(key(jti)) }
+
+    private fun <T> store(block: () -> T): T =
+        try {
+            block()
+        } catch (e: DataAccessException) {
+            throw AuthStoreUnavailableException(e)
+        }
 
     private fun key(jti: String) = "auth:jti:revoked:$jti"
 }
@@ -480,15 +492,11 @@ class JwtAuthFilter(
             chain.doFilter(request, response)
             return
         }
-        // fail-closed 只认 Redis 专属异常(PG 的 DataAccessException 不在此冒充;同 GlobalExceptionHandler 收窄)
+        // fail-closed:JtiBlacklist 已在源头把一切 Redis 故障(含命令超时)包装为 AuthStoreUnavailableException
         val revoked =
             try {
                 blacklist.isRevoked(principal.jti)
-            } catch (e: RedisConnectionFailureException) {
-                logger.error("jti blacklist unavailable, failing closed", e)
-                writeProblem(response, ProblemType.AUTH_STORE_UNAVAILABLE)
-                return
-            } catch (e: RedisSystemException) {
+            } catch (e: AuthStoreUnavailableException) {
                 logger.error("jti blacklist unavailable, failing closed", e)
                 writeProblem(response, ProblemType.AUTH_STORE_UNAVAILABLE)
                 return
@@ -1108,13 +1116,16 @@ data class LoginProtectionProps(
 /**
  * 登录保护(spec §5.3):固定窗口计数,Lua 脚本原子 INCR+PEXPIRE——
  * 杜绝"INCR 成功后 EXPIRE 失败留下永久 key"导致的永久锁定/限流(计划注记 6)。
- * Valkey 异常上抛 = fail-closed(handler 出 503)。
+ * 所有 redis 调用经 store{} 包装为 AuthStoreUnavailableException = fail-closed
+ * (同 JtiBlacklist 模式,覆盖命令超时;handler 出 503)。
  */
 @Component
 class LoginProtection(
     private val redis: StringRedisTemplate,
     private val props: LoginProtectionProps,
 ) {
+    // 每个 redis 调用包 store { ... }(私有辅助同 JtiBlacklist:catch DataAccessException → AuthStoreUnavailableException);
+    // ProblemException(RATE_LIMITED/锁定)在 store 块外抛出,不受包装影响。
     // RedisScript 执行签名以 Spring Data Redis 当前文档为准(计划注记 1)
     private val incrWithTtl =
         DefaultRedisScript(
