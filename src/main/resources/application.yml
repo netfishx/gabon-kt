@@ -10,3 +10,17 @@ spring:
 wallet:
   exchange-rate: 100         # 验收①：@ConfigurationProperties 构造器绑定
   currency: CNY
+---
+# 生产配置契约(spec §2.3 连接拓扑):runtime=gabon_app,迁移走 owner;
+# owner 必须与 codegen/测试一致(V4 alter default privileges 的生效前提)。
+# 任一 env 缺失 → 占位符解析失败 → 启动失败(fail fast),不会静默用 owner 跑业务。
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    username: gabon_app
+    password: ${GABON_DB_APP_PASSWORD}
+  flyway:
+    user: ${GABON_DB_OWNER_USER}
+    password: ${GABON_DB_OWNER_PASSWORD}

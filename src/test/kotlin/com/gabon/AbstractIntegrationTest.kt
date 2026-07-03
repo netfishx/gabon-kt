@@ -1,6 +1,7 @@
 package com.gabon
 
 import org.jooq.DSLContext
+import org.jooq.impl.DSL
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -21,9 +22,13 @@ abstract class AbstractIntegrationTest {
     @Autowired
     lateinit var redisConnectionFactory: RedisConnectionFactory
 
+    /** owner 连接:truncate(受限 role 无 TRUNCATE 权限)与越权种子专用;业务路径一律走 runtime dsl。 */
+    protected val ownerDsl: DSLContext
+        get() = ownerDslStatic
+
     @BeforeEach
     fun clean() {
-        dsl.execute(
+        ownerDsl.execute(
             "truncate ledger_entry, ledger_txn, outbox, inbox, account, refresh_token, admin_user, " +
                 "customer, recharge_order, recharge_package, withdraw_order restart identity cascade",
         )
@@ -35,7 +40,11 @@ abstract class AbstractIntegrationTest {
         // 单例容器：PG 与 Valkey 整个测试 JVM 复用（不 stop，JVM 退出/Ryuk 回收）
         @JvmStatic
         private val pg: PostgreSQLContainer =
-            PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine")).apply { start() }
+            PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine")).apply {
+                start()
+                // 预建 app role(spec §2.3 生产推荐二选一之"预先创建");V4 只授权
+                createConnection("").use { it.createStatement().execute("create role gabon_app login password 'test'") }
+            }
         // 表由 Boot 启动时自动迁移（spring-boot-starter-flyway），不再手动 migrate
 
         // Valkey：第三批（jti 黑名单/限流）消费；本批 classpath 引入 redis 客户端 + 每测试 flush
@@ -46,11 +55,18 @@ abstract class AbstractIntegrationTest {
                 .apply { start() }
 
         @JvmStatic
+        private val ownerDslStatic: DSLContext by lazy { DSL.using(pg.jdbcUrl, pg.username, pg.password) }
+
+        @JvmStatic
         @DynamicPropertySource
         fun containers(registry: DynamicPropertyRegistry) {
             registry.add("spring.datasource.url") { pg.jdbcUrl }
-            registry.add("spring.datasource.username") { pg.username }
-            registry.add("spring.datasource.password") { pg.password }
+            registry.add("spring.datasource.username") { "gabon_app" }
+            registry.add("spring.datasource.password") { "test" }
+            // Flyway 显式走 owner,不与 datasource 混用(spec §2.3 连接拓扑)
+            registry.add("spring.flyway.url") { pg.jdbcUrl }
+            registry.add("spring.flyway.user") { pg.username }
+            registry.add("spring.flyway.password") { pg.password }
             registry.add("spring.data.redis.host") { valkey.host }
             registry.add("spring.data.redis.port") { valkey.getMappedPort(VALKEY_PORT) }
             // 测试固定 32 字节全零密钥；prod 走文件注入（gabon.security.jwt.secret-file）。
