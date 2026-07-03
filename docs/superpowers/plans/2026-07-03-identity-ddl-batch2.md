@@ -156,6 +156,7 @@ EOF
 
 **Acceptance Criteria:**
 - [ ] 三表结构与 spec §5.1 一致:`username_canonical` unique、`totp_secret_enc`+`totp_key_version`+`totp_last_used_step`+`totp_enabled`、refresh_token 全列 + 四组索引(`token_hash` unique、`(principal_type, principal_id)`、`family_id`、`expires_at`)
+- [ ] **不变量落 DB(defense-in-depth,同 V1 风格)**:status ∈ (0,1) ×2、principal_type ∈ (1,2)、`octet_length(token_hash)=32`、TOTP 密材与 key_version 同生同灭且启用时均非空、key_version>0、last_used_step≥0
 - [ ] **TDD 顺序**:先只加 DDL 跑 `ModuleBoundaryTest` → 完整性断言红(报 Customer/AdminUser/RefreshToken 未登记)→ 登记后绿(红的证据留报告)
 - [ ] TABLE_OWNER 新增三项值为 `com.gabon.identity.internal`(允许访问前缀语义)
 - [ ] truncate 列表含三张新表,全部测试绿
@@ -185,7 +186,8 @@ create table customer (
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
   unique (username_canonical),
-  unique (invite_code)
+  unique (invite_code),
+  check (status in (0, 1))
 );
 create trigger trg_customer_updated before update on customer
   for each row execute function set_updated_at();
@@ -204,7 +206,11 @@ create table admin_user (
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
   unique (username_canonical),
-  check (not totp_enabled or totp_secret_enc is not null)  -- 启用必有密材
+  check (status in (0, 1)),
+  check ((totp_secret_enc is null) = (totp_key_version is null)),  -- 密材与版本同生同灭(第三批 AAD 绑定 key_version)
+  check (not totp_enabled or totp_secret_enc is not null),         -- 启用必有密材(经上一条,版本号亦必有)
+  check (totp_key_version is null or totp_key_version > 0),
+  check (totp_last_used_step is null or totp_last_used_step >= 0)
 );
 create trigger trg_admin_user_updated before update on admin_user
   for each row execute function set_updated_at();
@@ -223,7 +229,9 @@ create table refresh_token (
   created_ip         text,
   created_user_agent text,
   created_at         timestamptz not null default now(),
-  unique (token_hash)
+  unique (token_hash),
+  check (principal_type in (1, 2)),
+  check (octet_length(token_hash) = 32)                            -- 固化 SHA-256,防误存明文/hex 字符串
 );
 create index ix_refresh_token_principal on refresh_token (principal_type, principal_id);
 create index ix_refresh_token_family on refresh_token (family_id);
