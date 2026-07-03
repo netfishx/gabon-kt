@@ -1,0 +1,57 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-03-identity-auth-batch3.md",
+  "tasks": [
+    {
+      "id": 21,
+      "subject": "Batch3-Task 1: 依赖三件套 + Valkey flush + problem 模型",
+      "status": "pending",
+      "description": "**Goal:** security/data-redis/actuator/jjwt 依赖进场,测试基类补 Valkey flush 与测试 JWT 键,platform.web problem 模型落地。\n\n**Files:**\n- Modify: build.gradle.kts、AbstractIntegrationTest.kt\n- Create: platform/web/{ProblemType,GlobalExceptionHandler}.kt\n\n**Acceptance Criteria:**\n- jjwt 最新 0.12.x 查证;flush 每测试;problem 稳定 URI;16 测试仍绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"build.gradle.kts\", \"src/main/kotlin/com/gabon/platform/web/\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"jjwt latest 0.12.x sourced\", \"valkey flushed per test\", \"problem model with stable URIs\", \"check green\"]}\n```"
+    },
+    {
+      "id": 22,
+      "subject": "Batch3-Task 2: platform.security 基座(默认拒绝 + JWT + jti fail-closed)",
+      "status": "pending",
+      "description": "**Goal:** JWT 编解码(sid/UUIDv7 jti)、jti 黑名单 fail-closed、过滤器、PublicRoutesContributor、默认拒绝链。\n\n**Files:**\n- Create: platform/security/ 8 文件\n- Test: UuidV7Test、SecurityChainTest\n\n**Acceptance Criteria:**\n- 无票 401 unauthenticated;health 公开;黑名单 401;Valkey down 带票 503;secret 二选一 fail fast\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"frontier\", \"files\": [\"src/main/kotlin/com/gabon/platform/security/\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"default deny with contributor permits\", \"jwt roundtrip with sid and uuidv7 jti\", \"blacklist fail-closed 503\", \"check green\"]}\n```",
+      "blockedBy": [
+        21
+      ]
+    },
+    {
+      "id": 23,
+      "subject": "Batch3-Task 3: identity 纯组件(canonicalizer + TOTP + crypto)",
+      "status": "pending",
+      "description": "**Goal:** 规范化、RFC 6238 TOTP(digits 参数化)+Base32、AES-GCM AAD 加密——纯单元。\n\n**Files:**\n- Create: identity/internal/{UsernameCanonicalizer,Totp,TotpSecretCrypto}.kt + 3 单测\n\n**Acceptance Criteria:**\n- RFC 向量 8 位全过;AAD 篡改必拒;IV 随机;check 绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"src/main/kotlin/com/gabon/identity/internal/\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"rfc vectors pass at 8 digits\", \"AAD tamper rejected\", \"base32 tested\", \"check green\"]}\n```",
+      "blockedBy": [
+        22
+      ]
+    },
+    {
+      "id": 24,
+      "subject": "Batch3-Task 4: token 生命周期(repos + TokenService)",
+      "status": "pending",
+      "description": "**Goal:** refresh 仓储(原子旋转/重放/family 吊销)+ TokenService,含并发测试。\n\n**Files:**\n- Create: identity/internal/{RefreshTokenRepository,TokenService}.kt + TokenLifecycleTest\n\n**Acceptance Criteria:**\n- 原子旋转;重放吊销 family;并发双 refresh 单胜者;明文不落库;check 绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"frontier\", \"files\": [\"src/main/kotlin/com/gabon/identity/internal/RefreshTokenRepository.kt\", \"src/main/kotlin/com/gabon/identity/internal/TokenService.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"atomic rotation claim\", \"reuse revokes family\", \"concurrent double refresh single winner\", \"check green\"]}\n```",
+      "blockedBy": [
+        23
+      ]
+    },
+    {
+      "id": 25,
+      "subject": "Batch3-Task 5: C 端鉴权(service + 登录保护 + 端点 + 集成测试)",
+      "status": "pending",
+      "description": "**Goal:** register/login/refresh/logout/me/changePassword + 锁定/限流 + 统一 401 + fail-closed 测试。\n\n**Files:**\n- Create: identity/internal/{CustomerRepository,LoginProtection,AuthService}.kt、web/{dto,AuthController}.kt、IdentityPublicRoutes.kt + AuthFlowTest/ValkeyDownTest\n\n**Acceptance Criteria:**\n- 401 body 逐字节相同;锁定期正确密码也 401;IP 429;logout 凭 sid;Valkey down 503;check 绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"frontier\", \"files\": [\"src/main/kotlin/com/gabon/identity/internal/\", \"src/test/kotlin/com/gabon/AuthFlowTest.kt\", \"src/test/kotlin/com/gabon/ValkeyDownTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"uniform 401 byte-identical\", \"lockout rejects correct password\", \"logout revokes via sid\", \"valkey down fails closed\", \"check green\"]}\n```",
+      "blockedBy": [
+        24
+      ]
+    },
+    {
+      "id": 26,
+      "subject": "Batch3-Task 6: admin TOTP 鉴权 + 边界收尾",
+      "status": "pending",
+      "description": "**Goal:** admin login(启用后强制 TOTP)/enroll/confirm + CAS step;删 marker、根包断言、C7 增补、CLAUDE.md/WalletProps 收尾。\n\n**Files:**\n- Create: identity/internal/{AdminUserRepository,TotpVerifier,AdminAuthService}.kt、web/AdminAuthController.kt + AdminTotpFlowTest\n- Delete: IdentityInternalMarker.kt;Modify: ModuleBoundaryTest/架构文档 C7/CLAUDE.md/WalletProps\n\n**Acceptance Criteria:**\n- 同 code 二次 401(CAS);step 单调;customer 访问 enroll 403;根包探针红→绿;check 绿 + 最终测试数\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"frontier\", \"files\": [\"src/main/kotlin/com/gabon/identity/internal/\", \"src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\", \"docs/architecture-redesign.md\", \"CLAUDE.md\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"totp mandatory once enrolled\", \"cas burns each step\", \"root package assertion with probe\", \"C7 amendment landed\", \"check green\"]}\n```",
+      "blockedBy": [
+        25
+      ]
+    }
+  ],
+  "lastUpdated": "2026-07-03"
+}
