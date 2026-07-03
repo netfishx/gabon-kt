@@ -7,6 +7,7 @@ import com.gabon.platform.web.ProblemException
 import com.gabon.platform.web.ProblemType
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -61,8 +62,12 @@ class TokenService(
      * 旋转:原子抢占命中 1 行才发新对;0 行且 hash 存在 = 重放 → 吊销整个 family(spec §5.2)。
      * noRollbackFor 是安全语义的必要条件:重放路径先 revokeFamily 再抛 401,吊销必须随事务
      * 提交——默认回滚规则会把吊销一并回滚,family 逃生(并发测试钉死此语义)。
+     * 注意:noRollbackFor 是方法级契约——本方法新增任何写操作时必须重新评估,勿默认沿用。
+     * isolation 显式 pin READ_COMMITTED:败方 CAS 阻塞→EvalPlanQual 重查 0 行→重放路径可见
+     * 胜者新行,该链条仅在 READ COMMITTED 下成立(REPEATABLE READ 下败方直接 serialize error,
+     * family 逃逸吊销)——把已被依赖的隐式默认值 pin 成显式契约。
      */
-    @Transactional(noRollbackFor = [ProblemException::class])
+    @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = [ProblemException::class])
     fun refresh(
         rawRefreshToken: String,
         ip: String?,
@@ -100,7 +105,11 @@ class TokenService(
         blacklistRemaining(currentJti, expiresAt)
     }
 
-    /** 黑名单 TTL = 票的剩余有效期(spec §5.2 原文,非完整 access TTL);已过期不入。 */
+    /**
+     * 黑名单 TTL = 票的剩余有效期(spec §5.2 原文,非完整 access TTL);已过期不入。
+     * PG 侧撤销独立于 Redis 侧黑名单写入:黑名单失败时调用方收到 503(可重试,revokeFamily 幂等),
+     * 敞口 ≤ access 剩余 TTL,设计上已接受(spec §5.2 爆炸半径前提)。
+     */
     private fun blacklistRemaining(
         jti: String,
         expiresAt: Instant,
