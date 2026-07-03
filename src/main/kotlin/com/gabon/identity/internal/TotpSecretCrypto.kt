@@ -33,7 +33,14 @@ data class TotpKekProps(
 class TotpSecretCrypto(
     props: TotpKekProps,
 ) {
-    private val kek = SecretKeySpec(props.kekBytes(), "AES")
+    // JCA 对 16/24/32 字节 AES key 都合法——短 KEK 会静默降级 AES-128/192,与类名承诺不符;KEK 是系统边界输入,构造期 fail fast。
+    private val kek =
+        props.kekBytes().let { bytes ->
+            require(bytes.size == KEK_BYTES) {
+                "gabon.security.totp kek must be 32 bytes for AES-256, got ${bytes.size}"
+            }
+            SecretKeySpec(bytes, "AES")
+        }
     val keyVersion: Short = props.keyVersion
     private val random = SecureRandom()
 
@@ -54,6 +61,7 @@ class TotpSecretCrypto(
         keyVersion: Short,
         blob: ByteArray,
     ): ByteArray {
+        require(blob.size > IV_BYTES) { "totp secret blob too short: ${blob.size}" }
         val cipher = Cipher.getInstance(TRANSFORM)
         cipher.init(Cipher.DECRYPT_MODE, kek, GCMParameterSpec(TAG_BITS, blob.copyOfRange(0, IV_BYTES)))
         cipher.updateAAD(aad(adminId, keyVersion))
@@ -67,6 +75,7 @@ class TotpSecretCrypto(
 
     companion object {
         private const val TRANSFORM = "AES/GCM/NoPadding"
+        private const val KEK_BYTES = 32
         private const val IV_BYTES = 12
         private const val TAG_BITS = 128
     }

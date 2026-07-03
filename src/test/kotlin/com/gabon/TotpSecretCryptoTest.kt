@@ -51,4 +51,20 @@ class TotpSecretCryptoTest {
         val tagBytes = 16
         assertThat(blob).hasSize(ivBytes + plaintext.size + tagBytes)
     }
+
+    @Test
+    fun `rejects non-256-bit kek at construction time`() {
+        // JCA 静默接受 24 字节 key(AES-192)——构造期必须 fail fast,不许降级。
+        val shortKek = Base64.getEncoder().encodeToString(ByteArray(24))
+        assertThatThrownBy { TotpSecretCrypto(TotpKekProps(kekBase64 = shortKek)) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("32 bytes")
+    }
+
+    @Test
+    fun `rejects truncated blob shorter than iv`() {
+        assertThatThrownBy { crypto.decrypt(adminId = 1L, keyVersion = crypto.keyVersion, blob = ByteArray(11)) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("too short")
+    }
 }
