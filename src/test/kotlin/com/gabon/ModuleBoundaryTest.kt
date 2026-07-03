@@ -197,4 +197,32 @@ class ModuleBoundaryTest {
         val unregistered = tables.map { it.simpleName }.filterNot { it in TABLE_OWNER }
         check(unregistered.isEmpty()) { "jOOQ 表未在 TABLE_OWNER 登记归属:$unregistered(spec §4 规则 6:新迁移必须登记)" }
     }
+
+    /** 格子形状:上下文包内的类必须位于 api.. 或 internal..——根包散类是边界规则的盲区(第一批终审 Important #1) */
+    @Test
+    fun `context classes reside in api or internal`() {
+        for (ctx in CONTEXTS) {
+            classes()
+                .that()
+                .resideInAPackage("${pkg(ctx)}..")
+                .should()
+                .resideInAnyPackage("${pkg(ctx)}.api..", "${pkg(ctx)}.internal..")
+                .check(classes)
+        }
+    }
+
+    /** 规则 6 反向:登记了 codegen 不存在的表 = 白名单陈旧条目,同样失败(第一批终审 Minor #3) */
+    @Test
+    fun `table owner whitelist has no stale entries`() {
+        val generated =
+            classes
+                .filter { it.packageName == "com.gabon.jooq.tables" }
+                .filter { it.isTopLevelClass }
+                .filter { !it.simpleName.endsWith("Kt") && !it.simpleName.endsWith("Path") }
+                .map { it.simpleName }
+                .toSet()
+        check(generated.isNotEmpty()) { "com.gabon.jooq.tables 导入为空:archunit.main.classes 或 codegen 异常,断言失去意义" }
+        val stale = TABLE_OWNER.keys.filterNot { it in generated }
+        check(stale.isEmpty()) { "TABLE_OWNER 含 codegen 不存在的表(陈旧条目,须删除):$stale" }
+    }
 }
