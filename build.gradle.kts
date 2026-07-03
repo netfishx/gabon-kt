@@ -83,6 +83,8 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    // Boot 4 模块化:@AutoConfigureMockMvc 已从 starter-test 拆到 webmvc-test(包 org.springframework.boot.webmvc.test.autoconfigure)
+    testImplementation("org.springframework.boot:spring-boot-webmvc-test")
     testImplementation("org.testcontainers:testcontainers-postgresql:2.0.5")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     testImplementation("com.tngtech.archunit:archunit-junit5:1.4.2") // 1.4.x 的 ASM 才能读 Java 25 字节码

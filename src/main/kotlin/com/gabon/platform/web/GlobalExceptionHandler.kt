@@ -6,6 +6,7 @@ import org.springframework.data.redis.RedisConnectionFailureException
 import org.springframework.data.redis.RedisSystemException
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
+import org.springframework.web.ErrorResponse
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
@@ -39,6 +40,11 @@ class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(e: Exception): ResponseEntity<ProblemDetail> {
+        if (e is ErrorResponse) {
+            // 框架级 HTTP 语义异常(NoResourceFound 404 / 405 / 415 …,Framework 6.1+ 均实现
+            // ErrorResponse):保留其自带状态与 problem body,不得被兜底冒成 500
+            return ResponseEntity.status(e.statusCode).body(e.body)
+        }
         log.error("unhandled", e)
         return ResponseEntity.status(ProblemType.INTERNAL.status).body(ProblemType.INTERNAL.toProblemDetail())
     }

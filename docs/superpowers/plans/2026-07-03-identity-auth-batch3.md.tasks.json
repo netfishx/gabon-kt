@@ -4,7 +4,7 @@
     {
       "id": 21,
       "subject": "Batch3-Task 1: 依赖三件套 + Valkey flush + problem 模型",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** security/data-redis/actuator/jjwt 依赖进场,测试基类补 Valkey flush 与测试 JWT 键,platform.web problem 模型落地。\n\n**Files:**\n- Modify: build.gradle.kts、AbstractIntegrationTest.kt\n- Create: platform/web/{ProblemType,GlobalExceptionHandler}.kt\n\n**Acceptance Criteria:**\n- jjwt 最新 0.12.x 查证;flush 每测试;problem 稳定 URI;16 测试仍绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"build.gradle.kts\", \"src/main/kotlin/com/gabon/platform/web/\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"jjwt latest 0.12.x sourced\", \"valkey flushed per test\", \"problem model with stable URIs\", \"check green\"]}\n```"
     },
     {
@@ -53,5 +53,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-07-03"
+  "lastUpdated": "2026-07-03T16:00:00+08:00"
 }
