@@ -274,12 +274,17 @@ class AppRoleGuardTest : AbstractIntegrationTest() {
 }
 ```
 
-同一步在 `AbstractIntegrationTest` companion 加 `ownerDsl`(探针种子与后续 truncate 共用),`import org.jooq.impl.DSL`:
+同一步在 `AbstractIntegrationTest` 加 owner 连接(探针种子与后续 truncate 共用),`import org.jooq.impl.DSL`。**形态钉死**:companion 里只放 private static,对子类暴露实例级 protected 属性(避免 companion 成员可见性/编译坑):
 
 ```kotlin
-/** owner 连接:truncate(受限 role 无 TRUNCATE 权限)与越权种子专用;业务路径一律走 runtime dsl。 */
-@JvmStatic
-protected val ownerDsl: DSLContext by lazy { DSL.using(pg.jdbcUrl, pg.username, pg.password) }
+    // 实例侧(与 dsl 字段并列):
+    /** owner 连接:truncate(受限 role 无 TRUNCATE 权限)与越权种子专用;业务路径一律走 runtime dsl。 */
+    protected val ownerDsl: DSLContext
+        get() = ownerDslStatic
+
+    // companion 内(容器声明之后):
+    @JvmStatic
+    private val ownerDslStatic: DSLContext by lazy { DSL.using(pg.jdbcUrl, pg.username, pg.password) }
 ```
 
 - [ ] **Step 2: 跑探针验证红**
@@ -356,13 +361,23 @@ ownerDsl.execute(
 )
 ```
 
-`application.yml` flyway 段补注释(不加实际值,环境侧配置):
+`application.yml` 末尾追加 **prod profile 配置契约**(不只注释——runtime/迁移用户拆分在生产是强制的,env 缺失即占位符解析失败 → 启动 fail fast;测试/ValkeyDownTest 不激活 prod profile,不受影响):
 
 ```yaml
+---
+# 生产配置契约(spec §2.3 连接拓扑):runtime=gabon_app,迁移走 owner;
+# owner 必须与 codegen/测试一致(V4 alter default privileges 的生效前提)。
+# 任一 env 缺失 → 占位符解析失败 → 启动失败(fail fast),不会静默用 owner 跑业务。
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    username: gabon_app
+    password: ${GABON_DB_APP_PASSWORD}
   flyway:
-    enabled: true            # Boot 4 需 spring-boot-starter-flyway 才会启动时自动迁移
-    # 生产:spring.flyway.user/password 显式配 migration owner,spring.datasource 用 gabon_app(V4);
-    # owner 必须与 codegen/测试一致(V4 alter default privileges 的生效前提)
+    user: ${GABON_DB_OWNER_USER}
+    password: ${GABON_DB_OWNER_PASSWORD}
 ```
 
 注:`ValkeyDownTest` 不动——它自起 PG 且 datasource=owner,Flyway 默认沿用 datasource 凭据,V4 建 role 后无人使用,不在权限探针覆盖面。
@@ -397,11 +412,12 @@ git commit -m "feat: split app role from migration owner"
 - Modify: `src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt`
 - Modify: `src/test/kotlin/com/gabon/RechargeIdempotencyTest.kt`(新签名 + 异金额重放测试)
 - Modify: `src/test/kotlin/com/gabon/InsufficientBalanceTest.kt`(新签名调用点)
+- Modify: `src/test/kotlin/com/gabon/ModuleBoundaryTest.kt`(postEntries 唯一入口 ArchUnit 钉子)
 
 **Acceptance Criteria:**
 - [ ] `creditRecharge(orderNo, customerId, diamonds)` 签名生效(幂等键在前)
 - [ ] 同 `biz_no` 异金额重放 → false 且余额/分录不变(幂等门在守卫之前的钉子)
-- [ ] `postEntries` 是唯一写 `ledger_entry` 的生产入口,写前断言 ≥2 行且 Σ=0
+- [ ] `postEntries` 是唯一写 `ledger_entry` 的生产入口,写前断言 ≥2 行且 Σ=0,且由 ArchUnit 规则钉死(除 LedgerService 外生产类不得触碰 LedgerEntry 表类)
 - [ ] `frozenOf` 契约同 `balanceOf`(无账户返回 0)
 
 **Verify:** `./gradlew check` → BUILD SUCCESSFUL
@@ -500,8 +516,6 @@ package com.gabon.wallet.internal.ledger
 import com.gabon.jooq.tables.references.ACCOUNT
 import com.gabon.jooq.tables.references.LEDGER_ENTRY
 import com.gabon.jooq.tables.references.LEDGER_TXN
-import com.gabon.platform.web.ProblemException
-import com.gabon.platform.web.ProblemType
 import com.gabon.wallet.api.WalletBalanceApi
 import com.gabon.wallet.api.WalletLedgerApi
 import org.jooq.DSLContext
@@ -640,7 +654,50 @@ class LedgerService(
 }
 ```
 
-注:`guardedDebit`(守卫扣减)刻意不在本任务出现——它在本任务尚无调用方,未使用的 private 方法会被 lint 拦下;其完整实现随 Task 4 Step 3 与消费方一起进。此时 `ProblemException`/`ProblemType` import 也暂不加(同理),Task 4 一并引入。上面文件清单中 `import com.gabon.platform.web.*` 两行在本任务先省略。
+注:`guardedDebit`(守卫扣减)与 `ProblemException`/`ProblemType` import 刻意不在上面清单里——本任务无调用方,未使用的 private 方法/import 会被 lint 拦下;完整实现随 Task 4 Step 3 与消费方一起进。
+
+- [ ] **Step 4b: ArchUnit 钉死 postEntries 唯一入口(三层不变量①的自动化收口)**
+
+`ModuleBoundaryTest.kt` 加一条规则(复用既有 `tableNameOf` 三路收集,与规则 6 同机制;放在 `jooq table access is limited to the owning module` 之后):
+
+```kotlin
+    /**
+     * 三层不变量①收口钉子(钱核 spec §3.2-4):分录只能经 LedgerService.postEntries 写入——
+     * 除 LedgerService 外任何生产类(含 wallet.internal 其它类)不得触碰 LedgerEntry 表类。
+     * 表所有权(规则 6)只限到 wallet.internal 包,本规则收窄到单类;测试类不受限(探针在测试层)。
+     */
+    @Test
+    fun `ledger entry table is funneled through ledger service`() {
+        val onlyLedgerService =
+            object : ArchCondition<JavaClass>("not touch LedgerEntry outside LedgerService") {
+                override fun check(
+                    clazz: JavaClass,
+                    events: ConditionEvents,
+                ) {
+                    if (clazz.fullName == "com.gabon.wallet.internal.ledger.LedgerService") return
+                    val candidates =
+                        clazz.directDependenciesFromSelf.asSequence().map { it.targetClass } +
+                            clazz.methodCallsFromSelf.asSequence().map { it.target.rawReturnType } +
+                            clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
+                    if (candidates.any { tableNameOf(it) == "LedgerEntry" }) {
+                        events.add(
+                            SimpleConditionEvent.violated(
+                                clazz,
+                                "${clazz.name} 触碰 LedgerEntry:分录只能经 LedgerService.postEntries 写入(spec §3.2-4)",
+                            ),
+                        )
+                    }
+                }
+            }
+        classes()
+            .that()
+            .resideOutsideOfPackage("com.gabon.jooq..")
+            .should(onlyLedgerService)
+            .check(classes)
+    }
+```
+
+该规则对现状即绿(spike 起 LedgerService 就是唯一触碰者),是防退化钉子;其检测能力由同机制的规则 6 既有覆盖背书,不必人为制造红。
 
 - [ ] **Step 5: 验证绿**
 
@@ -655,7 +712,7 @@ Expected: BUILD SUCCESSFUL
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/main/kotlin/com/gabon/wallet/api/ src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt src/main/kotlin/com/gabon/platform/web/ProblemType.kt src/test/kotlin/com/gabon/RechargeIdempotencyTest.kt src/test/kotlin/com/gabon/InsufficientBalanceTest.kt
+git add src/main/kotlin/com/gabon/wallet/api/ src/main/kotlin/com/gabon/wallet/internal/ledger/LedgerService.kt src/main/kotlin/com/gabon/platform/web/ProblemType.kt src/test/kotlin/com/gabon/RechargeIdempotencyTest.kt src/test/kotlin/com/gabon/InsufficientBalanceTest.kt src/test/kotlin/com/gabon/ModuleBoundaryTest.kt
 git commit -m "feat: expose semantic wallet ledger api"
 ```
 
