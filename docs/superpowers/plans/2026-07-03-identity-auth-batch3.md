@@ -962,7 +962,9 @@ class TokenService(
         return issueInFamily(family, type, principalId, ip, userAgent)
     }
 
-    @Transactional
+    // noRollbackFor 必要:重放路径 revokeFamily 后抛 ProblemException(RuntimeException),
+    // 裸 @Transactional 会把吊销一并回滚 = family 逃生(Task 4 实证,移除该属性恰 2 测试红)
+    @Transactional(noRollbackFor = [ProblemException::class])
     fun refresh(rawRefreshToken: String, ip: String?, userAgent: String?): TokenPair {
         val hash = sha256(rawRefreshToken)
         val row = repo.claimForRotation(hash)
