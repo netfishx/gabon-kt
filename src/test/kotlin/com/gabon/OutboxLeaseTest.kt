@@ -8,7 +8,7 @@ import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
 
 /** 验收④：outbox SKIP LOCKED 原子领取——并发领取不重叠（不重复派发） */
-class OutboxLeaseTest : AbstractPgTest() {
+class OutboxLeaseTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var outbox: OutboxRepo
 

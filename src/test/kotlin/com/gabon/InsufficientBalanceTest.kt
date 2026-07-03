@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired
  * 探针刻意留在测试层（不进钱核 LedgerService）：它只改余额投影、不写 ledger 分录，
  * 若作为 public 业务方法会被误当扣减模板、破坏 balance==Σledger。真实扣减走双分录（见 LedgerService.creditRecharge）。
  */
-class InsufficientBalanceTest : AbstractPgTest() {
+class InsufficientBalanceTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var ledger: LedgerService
 

@@ -4,13 +4,13 @@
     {
       "id": 18,
       "subject": "Batch2-Task 1: 边界规则强化(格子形状 + 反向断言 + WalletProps 归位)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** 补上第一批终审移交的两条断言并把根包散类 WalletProps 归位。\n\n**Files:**\n- Create: src/main/kotlin/com/gabon/wallet/internal/WalletProps.kt\n- Modify: GabonApplication.kt(删 WalletProps)、ModuleBoundaryTest.kt(+2 测试)\n\n**Acceptance Criteria:**\n- 格子形状断言 + 负向探针红/绿证据\n- TABLE_OWNER 反向断言 + 假条目探针红/绿证据\n- WalletProps 归位 wallet.internal\n- ./gradlew check 全绿 16 测试\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"src/main/kotlin/com/gabon/wallet/internal/WalletProps.kt\", \"src/main/kotlin/com/gabon/GabonApplication.kt\", \"src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"shape assertion with red probe evidence\", \"stale entry assertion with red probe evidence\", \"WalletProps relocated\", \"16 tests green\"]}\n```"
     },
     {
       "id": 19,
       "subject": "Batch2-Task 2: V2__identity_core.sql + 表归属登记 + truncate 列表",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         18
       ],
@@ -26,5 +26,5 @@
       "description": "**Goal:** 测试基类改名 + Valkey 单例容器,CLAUDE.md 同步;main 与 build.gradle.kts 零改动。\n\n**Files:**\n- Rename+Modify: AbstractPgTest.kt → AbstractIntegrationTest.kt\n- Modify: 4 个子类基类名、CLAUDE.md\n\n**Acceptance Criteria:**\n- Valkey tag docker pull 核实;redis 属性名对照 Boot 4.1 文档核实\n- grep AbstractPgTest 零命中;不加 Redis 客户端依赖\n- ./gradlew check 全绿 16 测试\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"standard\", \"files\": [\"src/test/kotlin/com/gabon/AbstractIntegrationTest.kt\", \"CLAUDE.md\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"valkey tag verified\", \"redis property names verified against Boot 4.1 docs\", \"no main code or build changes\", \"16 tests green\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-07-03"
+  "lastUpdated": "2026-07-03T12:00:00+08:00"
 }

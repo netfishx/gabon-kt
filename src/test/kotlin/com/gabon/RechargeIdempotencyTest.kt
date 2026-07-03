@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 
 /** 验收④：幂等充值——重复 orderNo 只入账一次 */
-class RechargeIdempotencyTest : AbstractPgTest() {
+class RechargeIdempotencyTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var ledger: LedgerService
 

@@ -11,7 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired
  * 验收④：协程边界——suspend 编排并发 fan-out 调用阻塞钱核/读服务，
  * 事务路径本身保持阻塞（LedgerService 非 suspend）。
  */
-class CoroutineBoundaryTest : AbstractPgTest() {
+class CoroutineBoundaryTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var ledger: LedgerService
 
