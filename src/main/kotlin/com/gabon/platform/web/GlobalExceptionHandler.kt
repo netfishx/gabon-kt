@@ -2,6 +2,8 @@ package com.gabon.platform.web
 
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
+import org.springframework.data.redis.RedisConnectionFailureException
+import org.springframework.data.redis.RedisSystemException
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -22,9 +24,13 @@ class GlobalExceptionHandler {
     fun handleValidation(): ResponseEntity<ProblemDetail> =
         ResponseEntity.status(ProblemType.VALIDATION.status).body(ProblemType.VALIDATION.toProblemDetail())
 
-    /** Valkey 等鉴权基础设施不可用 → fail-closed 503(spec §5.2 定案) */
-    @ExceptionHandler(DataAccessException::class)
-    fun handleStoreDown(e: DataAccessException): ResponseEntity<ProblemDetail> {
+    /**
+     * Valkey 鉴权基础设施不可用 → fail-closed 503(spec §5.2)。
+     * **只认 Redis 专属异常**:jOOQ 经 Spring 翻译的 PG 异常同为 DataAccessException,
+     * 不得冒充 auth-store 故障——PG 侧异常落兜底 500(spec §6 fail fast;Task 1 质量审查收窄)。
+     */
+    @ExceptionHandler(RedisConnectionFailureException::class, RedisSystemException::class)
+    fun handleAuthStoreDown(e: DataAccessException): ResponseEntity<ProblemDetail> {
         log.error("auth store unavailable", e)
         return ResponseEntity
             .status(ProblemType.AUTH_STORE_UNAVAILABLE.status)
