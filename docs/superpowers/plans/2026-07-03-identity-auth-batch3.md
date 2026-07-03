@@ -363,7 +363,6 @@ object UuidV7 {
 ```kotlin
 package com.gabon.platform.security
 
-import io.jsonwebtoken.JwtException
 import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Keys
 import org.springframework.stereotype.Component
@@ -393,9 +392,13 @@ class AccessTokenCodec(
             .compact()
     }
 
-    /** 校验失败返回 null(过滤器按未认证处理,入口点 401);不抛——无效票不是系统错误。 */
+    /**
+     * 校验失败返回 null(过滤器按未认证处理,入口点 401);不抛——无效票不是系统错误。
+     * runCatching 兜住全部结构性错误(签名过但 typ 类型不对/缺 sid/未知 PrincipalType 等
+     * ClassCastException/NoSuchElementException/NPE),恶意构造的畸形票绝不冒成 500。
+     */
     fun verify(token: String): GabonPrincipal? =
-        try {
+        runCatching {
             val claims = Jwts.parser().verifyWith(key).clock { Date.from(clock.instant()) }.build()
                 .parseSignedClaims(token).payload
             GabonPrincipal(
@@ -405,11 +408,7 @@ class AccessTokenCodec(
                 jti = claims.id,
                 expiresAt = claims.expiration.toInstant(),
             )
-        } catch (e: JwtException) {
-            null
-        } catch (e: IllegalArgumentException) {
-            null
-        }
+        }.getOrNull()
 
     fun accessTtl() = ttl
 }
@@ -918,6 +917,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.Base64
@@ -1084,6 +1084,7 @@ import com.gabon.platform.web.ProblemException
 import com.gabon.platform.web.ProblemType
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.stereotype.Component
 import java.time.Duration
 
