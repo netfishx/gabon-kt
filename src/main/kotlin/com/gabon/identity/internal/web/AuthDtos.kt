@@ -2,6 +2,7 @@ package com.gabon.identity.internal.web
 
 import com.gabon.identity.internal.TokenPair
 import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
 
 /** 边界校验(jakarta validation):失败 → MethodArgumentNotValidException → 400 /problems/validation。 */
@@ -13,6 +14,7 @@ private const val PASSWORD_MAX = 128
 data class RegisterRequest(
     @field:NotBlank
     @field:Size(min = USERNAME_MIN, max = USERNAME_MAX)
+    @field:Pattern(regexp = "^[\\p{Alnum}_.-]+$", message = "username must be alphanumeric with _ . -")
     val username: String,
     @field:NotBlank
     @field:Size(min = PASSWORD_MIN, max = PASSWORD_MAX)

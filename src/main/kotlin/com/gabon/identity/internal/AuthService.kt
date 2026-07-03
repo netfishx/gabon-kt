@@ -25,6 +25,9 @@ class AuthService(
 ) {
     private val random = SecureRandom()
 
+    /** 计时对齐用假 hash(与线上同一 encoder,cost 一致);未知用户路径拿它跑一次 matches 抵消 bcrypt 耗时差。 */
+    private val dummyHash = requireNotNull(passwordEncoder.encode(DUMMY_PASSWORD)) { "password encoder returned null" }
+
     @Transactional
     fun register(
         username: String,
@@ -54,7 +57,12 @@ class AuthService(
         val canonical = UsernameCanonicalizer.canonicalize(username)
         protection.checkIpLimit(ip)
         protection.assertNotLocked(SCOPE_CUSTOMER, canonical)
-        val auth = customers.findAuthByCanonical(canonical) ?: rejectLogin(canonical, "unknown user", countFailure = true)
+        val auth = customers.findAuthByCanonical(canonical)
+        if (auth == null) {
+            // 等功耗:未知用户也付一次 bcrypt 代价,消除"跳过 matches"暴露的计时侧信道(结果丢弃)。
+            passwordEncoder.matches(password, dummyHash)
+            rejectLogin(canonical, "unknown user", countFailure = true)
+        }
         if (!passwordEncoder.matches(password, auth.passwordHash)) rejectLogin(canonical, "bad password", countFailure = true)
         // 账号禁用不计失败计数(密码可能正确,封禁是人工态,不因此累加锁定)——仍走统一 401
         if (!auth.active) rejectLogin(canonical, "disabled", countFailure = false)
@@ -132,6 +140,9 @@ class AuthService(
 
     companion object {
         private const val SCOPE_CUSTOMER = "customer"
+
+        /** 计时对齐假密码,非真实凭据,仅用于生成 dummyHash。 */
+        private const val DUMMY_PASSWORD = "timing-equalizer-not-a-real-password"
 
         /** 邀请码字母表 A-Z2-7(去易混 0/1/8/9),长度 10(spec §5.1)。 */
         private const val INVITE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"

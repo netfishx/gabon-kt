@@ -59,6 +59,36 @@ class AuthFlowTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `disabled account login yields the same 401 as invalid credentials`() {
+        register("mallory")
+        dsl
+            .update(CUSTOMER)
+            .set(CUSTOMER.STATUS, DISABLED_STATUS)
+            .where(CUSTOMER.USERNAME_CANONICAL.eq("mallory"))
+            .execute()
+        login("mallory", PASSWORD)
+            .andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.type").value("/problems/invalid-credentials"))
+    }
+
+    @Test
+    fun `change password with wrong current password is rejected and old session survives`() {
+        val pair = register("oscar")
+        mockMvc
+            .perform(
+                post("/v1/auth/password")
+                    .header(AUTH, "Bearer ${pair.accessToken}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(ChangePasswordRequest("wrongcurrent", NEW_PASSWORD))),
+            ).andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.type").value("/problems/invalid-credentials"))
+        // 改密失败不吊销 session:旧 access 仍可用
+        mockMvc
+            .perform(get("/v1/auth/me").header(AUTH, "Bearer ${pair.accessToken}"))
+            .andExpect(status().isOk)
+    }
+
+    @Test
     fun `account locks after five failures and correct password is rejected while locked`() {
         register("dave")
         repeat(MAX_FAILURES) { login("dave", "wrongpassword").andExpect(status().isUnauthorized) }
@@ -110,6 +140,13 @@ class AuthFlowTest : AbstractIntegrationTest() {
             .andExpect(jsonPath("$.type").value("/problems/validation"))
         // 邀请码提供但无效
         postJson("/v1/auth/register", RegisterRequest("heidi", PASSWORD, "ZZZZZZZZZZ"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.type").value("/problems/validation"))
+    }
+
+    @Test
+    fun `username with a colon is rejected by the boundary whitelist`() {
+        postJson("/v1/auth/register", RegisterRequest("a:b:c", PASSWORD, null))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.type").value("/problems/validation"))
     }
@@ -175,5 +212,6 @@ class AuthFlowTest : AbstractIntegrationTest() {
         private const val NEW_PASSWORD = "newpassword456"
         private const val MAX_FAILURES = 5
         private const val IP_LIMIT = 30
+        private const val DISABLED_STATUS: Short = 0
     }
 }
