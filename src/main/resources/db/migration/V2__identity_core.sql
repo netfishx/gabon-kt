@@ -7,6 +7,8 @@ create table customer (
   username_canonical text not null,
   password_hash      text not null,
   invite_code        text not null,                 -- 注册时生成(第三批)
+  -- invited_by 自引用:jOOQ 反向 join path 因命名冲突不生成(Ambiguous key name 警告,已知),反查邀请关系手写显式 join;
+  -- 未建索引:系统不硬删用户,若引入硬删再新增迁移补 ix_customer_invited_by
   invited_by         bigint references customer(id),
   status             smallint not null default 1,   -- 1=active 0=disabled(人工封禁)
   last_login_at      timestamptz,
