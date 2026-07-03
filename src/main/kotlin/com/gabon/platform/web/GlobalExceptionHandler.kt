@@ -1,9 +1,7 @@
 package com.gabon.platform.web
 
+import com.gabon.platform.security.AuthStoreUnavailableException
 import org.slf4j.LoggerFactory
-import org.springframework.dao.DataAccessException
-import org.springframework.data.redis.RedisConnectionFailureException
-import org.springframework.data.redis.RedisSystemException
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
 import org.springframework.web.ErrorResponse
@@ -27,11 +25,11 @@ class GlobalExceptionHandler {
 
     /**
      * Valkey 鉴权基础设施不可用 → fail-closed 503(spec §5.2)。
-     * **只认 Redis 专属异常**:jOOQ 经 Spring 翻译的 PG 异常同为 DataAccessException,
-     * 不得冒充 auth-store 故障——PG 侧异常落兜底 500(spec §6 fail fast;Task 1 质量审查收窄)。
+     * 包装发生在 Redis 专属组件(JtiBlacklist 等)内部:连接失败/命令超时/系统异常全覆盖,
+     * jOOQ/PG 侧异常不可能流入包装,不会冒充 auth-store 故障——PG 侧落兜底 500(spec §6 fail fast)。
      */
-    @ExceptionHandler(RedisConnectionFailureException::class, RedisSystemException::class)
-    fun handleAuthStoreDown(e: DataAccessException): ResponseEntity<ProblemDetail> {
+    @ExceptionHandler(AuthStoreUnavailableException::class)
+    fun handleAuthStoreDown(e: AuthStoreUnavailableException): ResponseEntity<ProblemDetail> {
         log.error("auth store unavailable", e)
         return ResponseEntity
             .status(ProblemType.AUTH_STORE_UNAVAILABLE.status)

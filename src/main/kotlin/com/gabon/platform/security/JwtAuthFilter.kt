@@ -1,12 +1,10 @@
 package com.gabon.platform.security
 
 import com.gabon.platform.web.ProblemType
+import com.gabon.platform.web.ProblemWriter
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
-import org.springframework.data.redis.RedisConnectionFailureException
-import org.springframework.data.redis.RedisSystemException
-import org.springframework.http.MediaType
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
@@ -55,29 +53,17 @@ class JwtAuthFilter(
                 chain.doFilter(request, response)
             }
             // 吊销票再现 = 强可疑信号:立即拒,公开路由也不放行
-            Revocation.REVOKED -> writeProblem(response, ProblemType.UNAUTHENTICATED)
-            Revocation.STORE_DOWN -> writeProblem(response, ProblemType.AUTH_STORE_UNAVAILABLE)
+            Revocation.REVOKED -> ProblemWriter.write(response, objectMapper, ProblemType.UNAUTHENTICATED)
+            Revocation.STORE_DOWN -> ProblemWriter.write(response, objectMapper, ProblemType.AUTH_STORE_UNAVAILABLE)
         }
     }
 
-    /** fail-closed 只认 Redis 专属异常:jOOQ/PG 侧 DataAccessException 不得冒充(同 GlobalExceptionHandler 收窄)。 */
+    /** fail-closed:黑名单在源头把全部存储故障(含 Lettuce 超时)包装为 AuthStoreUnavailableException。 */
     private fun checkRevocation(jti: String): Revocation =
         try {
             if (blacklist.isRevoked(jti)) Revocation.REVOKED else Revocation.ACTIVE
-        } catch (e: RedisConnectionFailureException) {
-            logger.error("jti blacklist unavailable, failing closed", e)
-            Revocation.STORE_DOWN
-        } catch (e: RedisSystemException) {
+        } catch (e: AuthStoreUnavailableException) {
             logger.error("jti blacklist unavailable, failing closed", e)
             Revocation.STORE_DOWN
         }
-
-    private fun writeProblem(
-        response: HttpServletResponse,
-        type: ProblemType,
-    ) {
-        response.status = type.status.value()
-        response.contentType = MediaType.APPLICATION_PROBLEM_JSON_VALUE
-        response.writer.write(objectMapper.writeValueAsString(type.toProblemDetail()))
-    }
 }

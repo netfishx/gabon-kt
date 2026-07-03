@@ -1,10 +1,9 @@
 package com.gabon.platform.security
 
 import com.gabon.platform.web.ProblemType
-import jakarta.servlet.http.HttpServletResponse
+import com.gabon.platform.web.ProblemWriter
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.http.MediaType
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
@@ -49,22 +48,12 @@ class SecurityConfig {
                 registry.anyRequest().authenticated()
             }.exceptionHandling {
                 it.authenticationEntryPoint { _, response, _ ->
-                    writeProblem(response, objectMapper, ProblemType.UNAUTHENTICATED)
+                    ProblemWriter.write(response, objectMapper, ProblemType.UNAUTHENTICATED)
                 }
                 it.accessDeniedHandler { _, response, _ ->
-                    writeProblem(response, objectMapper, ProblemType.FORBIDDEN)
+                    ProblemWriter.write(response, objectMapper, ProblemType.FORBIDDEN)
                 }
             }.addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter::class.java)
         return http.build()
-    }
-
-    private fun writeProblem(
-        response: HttpServletResponse,
-        objectMapper: ObjectMapper,
-        type: ProblemType,
-    ) {
-        response.status = type.status.value()
-        response.contentType = MediaType.APPLICATION_PROBLEM_JSON_VALUE
-        response.writer.write(objectMapper.writeValueAsString(type.toProblemDetail()))
     }
 }

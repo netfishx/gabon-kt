@@ -10,7 +10,7 @@ import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-import org.springframework.data.redis.RedisConnectionFailureException
+import org.springframework.dao.QueryTimeoutException
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.HttpStatus
 import org.springframework.mock.web.MockFilterChain
@@ -44,9 +44,6 @@ class SecurityChainTest : AbstractIntegrationTest() {
 
     @Autowired
     lateinit var objectMapper: ObjectMapper
-
-    @Autowired
-    lateinit var stringRedisTemplate: StringRedisTemplate
 
     @Test
     fun `unticketed request on any route gets 401 unauthenticated problem`() {
@@ -97,12 +94,31 @@ class SecurityChainTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `customer ticket on admin route gets 403 forbidden problem`() {
+        val token = codec.issue(1L, PrincipalType.CUSTOMER, UUID.randomUUID())
+        mockMvc
+            .perform(get("/v1/admin/whatever").header("Authorization", "Bearer $token"))
+            .andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.type").value("/problems/forbidden"))
+    }
+
+    @Test
+    fun `admin ticket passes the admin gate to dispatch`() {
+        val token = codec.issue(2L, PrincipalType.ADMIN, UUID.randomUUID())
+        mockMvc
+            .perform(get("/v1/admin/whatever").header("Authorization", "Bearer $token"))
+            .andExpect(status().isNotFound) // 过门禁无路由:404 而非 403
+    }
+
+    @Test
     fun `valkey outage fails closed with 503 for ticketed requests`() {
-        val throwingBlacklist =
-            object : JtiBlacklist(stringRedisTemplate) {
-                override fun isRevoked(jti: String): Boolean = throw RedisConnectionFailureException("simulated outage")
+        // Lettuce 命令超时形态:Spring 翻译为 QueryTimeoutException(非 Redis 专属异常),
+        // 走真实 JtiBlacklist 证明源头包装 + 过滤器 fail-closed 全覆盖
+        val timingOutTemplate =
+            object : StringRedisTemplate() {
+                override fun hasKey(key: String): Boolean = throw QueryTimeoutException("simulated command timeout")
             }
-        val filter = JwtAuthFilter(codec, throwingBlacklist, objectMapper)
+        val filter = JwtAuthFilter(codec, JtiBlacklist(timingOutTemplate), objectMapper)
         val token = codec.issue(1L, PrincipalType.CUSTOMER, UUID.randomUUID())
         val request = MockHttpServletRequest("GET", "/v1/whatever")
         request.addHeader("Authorization", "Bearer $token")
