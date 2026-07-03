@@ -25,7 +25,7 @@ class GlobalExceptionHandler {
 
     /**
      * Valkey 鉴权基础设施不可用 → fail-closed 503(spec §5.2)。
-     * 包装发生在 Redis 专属组件(JtiBlacklist 等)内部:连接失败/命令超时/系统异常全覆盖,
+     * 包装发生在 Redis 专属组件(TokenRevocationStore 等)内部:连接失败/命令超时/系统异常全覆盖,
      * jOOQ/PG 侧异常不可能流入包装,不会冒充 auth-store 故障——PG 侧落兜底 500(spec §6 fail fast)。
      */
     @ExceptionHandler(AuthStoreUnavailableException::class)

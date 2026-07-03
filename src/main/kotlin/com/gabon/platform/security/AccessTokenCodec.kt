@@ -54,6 +54,7 @@ class AccessTokenCodec(
                 type = PrincipalType.of((claims["typ"] as Number).toShort()),
                 sid = UUID.fromString(claims["sid"] as String),
                 jti = claims.id,
+                issuedAt = claims.issuedAt.toInstant(),
                 expiresAt = claims.expiration.toInstant(),
             )
         }.getOrNull()

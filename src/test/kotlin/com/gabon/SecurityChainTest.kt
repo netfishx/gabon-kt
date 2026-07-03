@@ -1,10 +1,10 @@
 package com.gabon
 
 import com.gabon.platform.security.AccessTokenCodec
-import com.gabon.platform.security.JtiBlacklist
 import com.gabon.platform.security.JwtAuthFilter
 import com.gabon.platform.security.JwtProps
 import com.gabon.platform.security.PrincipalType
+import com.gabon.platform.security.TokenRevocationStore
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.dao.QueryTimeoutException
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ValueOperations
 import org.springframework.http.HttpStatus
 import org.springframework.mock.web.MockFilterChain
 import org.springframework.mock.web.MockHttpServletRequest
@@ -37,7 +38,7 @@ class SecurityChainTest : AbstractIntegrationTest() {
     lateinit var codec: AccessTokenCodec
 
     @Autowired
-    lateinit var blacklist: JtiBlacklist
+    lateinit var revocations: TokenRevocationStore
 
     @Autowired
     lateinit var jwtProps: JwtProps
@@ -72,7 +73,7 @@ class SecurityChainTest : AbstractIntegrationTest() {
     fun `revoked jti is rejected on protected and public routes alike`() {
         val token = codec.issue(1L, PrincipalType.CUSTOMER, UUID.randomUUID())
         val jti = codec.verify(token)!!.jti
-        blacklist.revoke(jti, Duration.ofMinutes(15))
+        revocations.revoke(jti, Duration.ofMinutes(15))
         mockMvc
             .perform(get("/v1/whatever").header("Authorization", "Bearer $token"))
             .andExpect(status().isUnauthorized)
@@ -113,12 +114,12 @@ class SecurityChainTest : AbstractIntegrationTest() {
     @Test
     fun `valkey outage fails closed with 503 for ticketed requests`() {
         // Lettuce 命令超时形态:Spring 翻译为 QueryTimeoutException(非 Redis 专属异常),
-        // 走真实 JtiBlacklist 证明源头包装 + 过滤器 fail-closed 全覆盖
+        // 走真实 TokenRevocationStore 证明源头包装 + 过滤器 fail-closed 全覆盖
         val timingOutTemplate =
             object : StringRedisTemplate() {
-                override fun hasKey(key: String): Boolean = throw QueryTimeoutException("simulated command timeout")
+                override fun opsForValue(): ValueOperations<String, String> = throw QueryTimeoutException("simulated command timeout")
             }
-        val filter = JwtAuthFilter(codec, JtiBlacklist(timingOutTemplate), objectMapper)
+        val filter = JwtAuthFilter(codec, TokenRevocationStore(timingOutTemplate), objectMapper)
         val token = codec.issue(1L, PrincipalType.CUSTOMER, UUID.randomUUID())
         val request = MockHttpServletRequest("GET", "/v1/whatever")
         request.addHeader("Authorization", "Bearer $token")
@@ -136,6 +137,7 @@ class SecurityChainTest : AbstractIntegrationTest() {
         assertThat(principal.id).isEqualTo(42L)
         assertThat(principal.type).isEqualTo(PrincipalType.ADMIN)
         assertThat(principal.sid).isEqualTo(sid)
+        assertThat(principal.issuedAt).isBeforeOrEqualTo(Instant.now())
         assertThat(principal.expiresAt).isAfter(Instant.now())
         val jti = UUID.fromString(principal.jti)
         assertThat(jti.version()).isEqualTo(7)

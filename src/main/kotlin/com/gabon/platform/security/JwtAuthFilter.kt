@@ -15,13 +15,13 @@ import tools.jackson.databind.ObjectMapper
 private const val BEARER_PREFIX = "Bearer "
 
 /**
- * bearer → 校验 → jti 黑名单(fail-closed)→ SecurityContext。
+ * bearer → 校验 → 吊销校验(jti/sid/principal 三键,fail-closed)→ SecurityContext。
  * 无票/无效票不在此拦截,由默认拒绝链的入口点出 401;吊销票任何路由一律 401 短路。
  */
 @Component
 class JwtAuthFilter(
     private val codec: AccessTokenCodec,
-    private val blacklist: JtiBlacklist,
+    private val revocations: TokenRevocationStore,
     private val objectMapper: ObjectMapper,
 ) : OncePerRequestFilter() {
     private enum class Revocation { ACTIVE, REVOKED, STORE_DOWN }
@@ -41,7 +41,7 @@ class JwtAuthFilter(
             chain.doFilter(request, response)
             return
         }
-        when (checkRevocation(principal.jti)) {
+        when (checkRevocation(principal)) {
             Revocation.ACTIVE -> {
                 val auth =
                     UsernamePasswordAuthenticationToken.authenticated(
@@ -58,12 +58,12 @@ class JwtAuthFilter(
         }
     }
 
-    /** fail-closed:黑名单在源头把全部存储故障(含 Lettuce 超时)包装为 AuthStoreUnavailableException。 */
-    private fun checkRevocation(jti: String): Revocation =
+    /** fail-closed:吊销存储在源头把全部存储故障(含 Lettuce 超时)包装为 AuthStoreUnavailableException。 */
+    private fun checkRevocation(principal: GabonPrincipal): Revocation =
         try {
-            if (blacklist.isRevoked(jti)) Revocation.REVOKED else Revocation.ACTIVE
+            if (revocations.isRevoked(principal)) Revocation.REVOKED else Revocation.ACTIVE
         } catch (e: AuthStoreUnavailableException) {
-            logger.error("jti blacklist unavailable, failing closed", e)
+            logger.error("revocation store unavailable, failing closed", e)
             Revocation.STORE_DOWN
         }
 }

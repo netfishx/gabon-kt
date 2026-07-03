@@ -4,22 +4,33 @@ import com.gabon.identity.internal.TokenPair
 import com.gabon.identity.internal.TokenService
 import com.gabon.jooq.tables.references.REFRESH_TOKEN
 import com.gabon.platform.security.AccessTokenCodec
-import com.gabon.platform.security.JtiBlacklist
+import com.gabon.platform.security.JwtProps
 import com.gabon.platform.security.PrincipalType
+import com.gabon.platform.security.TokenRevocationStore
 import com.gabon.platform.web.ProblemException
 import com.gabon.platform.web.ProblemType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.security.MessageDigest
+import java.time.Clock
 import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
 
-/** refresh token 生命周期验收(spec §5.2):原子旋转、重放吊销全 family、logout/revokeAll、明文不落库。 */
+/** refresh token 生命周期验收(spec §5.2):原子旋转、重放吊销全 family、logout/revokeAll、存量 access 立即失效、明文不落库。 */
+@AutoConfigureMockMvc
 class TokenLifecycleTest : AbstractIntegrationTest() {
+    @Autowired
+    lateinit var mockMvc: MockMvc
+
     @Autowired
     lateinit var tokens: TokenService
 
@@ -27,7 +38,10 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
     lateinit var codec: AccessTokenCodec
 
     @Autowired
-    lateinit var blacklist: JtiBlacklist
+    lateinit var jwtProps: JwtProps
+
+    @Autowired
+    lateinit var revocations: TokenRevocationStore
 
     @Test
     fun `rotation issues a new pair and replay of the old token revokes the whole family`() {
@@ -82,14 +96,14 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
     }
 
     @Test
-    fun `logout revokes the family and blacklists the jti`() {
+    fun `logout revokes the family and the current access ticket`() {
         val pair = tokens.issuePair(PrincipalType.CUSTOMER, 4L, null, null)
         val principal = codec.verify(pair.accessToken)!!
 
         tokens.logout(principal.sid, principal.jti, principal.expiresAt)
 
         assertRefreshRejected(pair.refreshToken)
-        assertThat(blacklist.isRevoked(principal.jti)).isTrue()
+        assertThat(revocations.isRevoked(principal)).isTrue()
     }
 
     @Test
@@ -102,7 +116,45 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
 
         assertRefreshRejected(p1.refreshToken)
         assertRefreshRejected(p2.refreshToken)
-        assertThat(blacklist.isRevoked(principal.jti)).isTrue()
+        assertThat(revocations.isRevoked(principal)).isTrue()
+    }
+
+    @Test
+    fun `logout revokes outstanding access of the same family immediately`() {
+        val first = tokens.issuePair(PrincipalType.CUSTOMER, 8L, null, null)
+        val second = tokens.refresh(first.refreshToken, null, null) // 同 family:first 的 access 仍在飞
+        assertAccessAlive(first.accessToken)
+
+        val principal = codec.verify(second.accessToken)!!
+        tokens.logout(principal.sid, principal.jti, principal.expiresAt)
+
+        assertAccessRevoked(first.accessToken) // 存量票立即 401,不滑行到自然过期(spec §5.2 修订)
+    }
+
+    @Test
+    fun `revoke all kills outstanding access of other devices immediately`() {
+        val deviceA = tokens.issuePair(PrincipalType.CUSTOMER, 9L, null, null)
+        val deviceB = tokens.issuePair(PrincipalType.CUSTOMER, 9L, null, null)
+        // 另一设备的存量票:回拨 10 秒签发,iat 严格早于吊销秒(同秒签发的旧票是 spec §5.2 已接受的残余敞口)
+        val pastCodec = AccessTokenCodec(jwtProps, Clock.fixed(Instant.now().minusSeconds(10), ZoneOffset.UTC))
+        val staleAccess = pastCodec.issue(9L, PrincipalType.CUSTOMER, codec.verify(deviceB.accessToken)!!.sid)
+        assertAccessAlive(staleAccess)
+
+        val principal = codec.verify(deviceA.accessToken)!!
+        tokens.revokeAll(PrincipalType.CUSTOMER, 9L, principal.jti, principal.expiresAt)
+
+        assertAccessRevoked(staleAccess) // 改密后其它设备存量票立即 401
+    }
+
+    @Test
+    fun `replay detection revokes outstanding access of the family immediately`() {
+        val first = tokens.issuePair(PrincipalType.CUSTOMER, 10L, null, null)
+        val second = tokens.refresh(first.refreshToken, null, null)
+        assertAccessAlive(second.accessToken)
+
+        assertRefreshRejected(first.refreshToken) // 重放 → 全 family 吊销
+
+        assertAccessRevoked(second.accessToken) // 胜者新对的 access 也立即失效
     }
 
     @Test
@@ -123,18 +175,32 @@ class TokenLifecycleTest : AbstractIntegrationTest() {
     }
 
     @Test
-    fun `already expired access ticket does not enter the blacklist`() {
+    fun `logout with an already expired access ticket succeeds and still kills the family`() {
         val pair = tokens.issuePair(PrincipalType.CUSTOMER, 7L, null, null)
         val principal = codec.verify(pair.accessToken)!!
 
+        // 过期票不写 jti 黑名单(负 TTL SET 会炸)——不抛即覆盖该守卫;sid 标记与 family 照吊
         tokens.logout(principal.sid, principal.jti, Instant.now().minusSeconds(60))
 
-        assertThat(blacklist.isRevoked(principal.jti)).isFalse()
-        assertRefreshRejected(pair.refreshToken) // 过期票不入黑名单,但 family 照吊
+        assertRefreshRejected(pair.refreshToken)
+        assertThat(revocations.isRevoked(principal)).isTrue() // sid 标记吊销该 family 的存量票
     }
 
     private fun assertRefreshRejected(rawRefreshToken: String) {
         val ex = assertThrows<ProblemException> { tokens.refresh(rawRefreshToken, null, null) }
         assertThat(ex.type).isEqualTo(ProblemType.INVALID_CREDENTIALS)
+    }
+
+    /** 过链无路由 = 404:认证生效且未被吊销(同 SecurityChainTest 模式)。 */
+    private fun assertAccessAlive(accessToken: String) {
+        mockMvc
+            .perform(get("/v1/whatever").header("Authorization", "Bearer $accessToken"))
+            .andExpect(status().isNotFound)
+    }
+
+    private fun assertAccessRevoked(accessToken: String) {
+        mockMvc
+            .perform(get("/v1/whatever").header("Authorization", "Bearer $accessToken"))
+            .andExpect(status().isUnauthorized)
     }
 }

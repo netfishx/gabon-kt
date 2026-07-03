@@ -17,11 +17,12 @@ enum class PrincipalType(
     }
 }
 
-/** 过滤器解出的已认证主体(sid = refresh family,logout 凭它吊销;expiresAt 供黑名单剩余 TTL;spec §5.2)。 */
+/** 过滤器解出的已认证主体(sid = refresh family,logout 凭它吊销;expiresAt 供黑名单剩余 TTL;issuedAt 供改密 iat-cutoff 判定;spec §5.2)。 */
 data class GabonPrincipal(
     val id: Long,
     val type: PrincipalType,
     val sid: UUID,
     val jti: String,
+    val issuedAt: Instant,
     val expiresAt: Instant,
 )

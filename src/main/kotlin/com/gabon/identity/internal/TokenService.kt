@@ -1,8 +1,9 @@
 package com.gabon.identity.internal
 
 import com.gabon.platform.security.AccessTokenCodec
-import com.gabon.platform.security.JtiBlacklist
+import com.gabon.platform.security.AuthStoreUnavailableException
 import com.gabon.platform.security.PrincipalType
+import com.gabon.platform.security.TokenRevocationStore
 import com.gabon.platform.web.ProblemException
 import com.gabon.platform.web.ProblemType
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -41,7 +42,7 @@ data class TokenPair(
 class TokenService(
     private val repo: RefreshTokenRepository,
     private val codec: AccessTokenCodec,
-    private val blacklist: JtiBlacklist,
+    private val revocations: TokenRevocationStore,
     private val props: RefreshProps,
     private val clock: Clock,
 ) {
@@ -62,12 +63,17 @@ class TokenService(
      * 旋转:原子抢占命中 1 行才发新对;0 行且 hash 存在 = 重放 → 吊销整个 family(spec §5.2)。
      * noRollbackFor 是安全语义的必要条件:重放路径先 revokeFamily 再抛 401,吊销必须随事务
      * 提交——默认回滚规则会把吊销一并回滚,family 逃生(并发测试钉死此语义)。
+     * AuthStoreUnavailableException 同列:sid 标记写失败 → 503 时 PG 吊销必须照常提交,否则
+     * family 逃逸;键可由调用方重试同路径补写(revokeFamily 幂等)。
      * 注意:noRollbackFor 是方法级契约——本方法新增任何写操作时必须重新评估,勿默认沿用。
      * isolation 显式 pin READ_COMMITTED:败方 CAS 阻塞→EvalPlanQual 重查 0 行→重放路径可见
      * 胜者新行,该链条仅在 READ COMMITTED 下成立(REPEATABLE READ 下败方直接 serialize error,
      * family 逃逸吊销)——把已被依赖的隐式默认值 pin 成显式契约。
      */
-    @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = [ProblemException::class])
+    @Transactional(
+        isolation = Isolation.READ_COMMITTED,
+        noRollbackFor = [ProblemException::class, AuthStoreUnavailableException::class],
+    )
     fun refresh(
         rawRefreshToken: String,
         ip: String?,
@@ -79,6 +85,7 @@ class TokenService(
             val family = repo.familyOf(hash)
             if (family != null) {
                 repo.revokeFamily(family) // 重放:已旋转/已吊销/已过期的 token 再现 → 全 family 吊销
+                revocations.revokeSid(family, codec.accessTtl()) // 该 family 存量 access 立即失效(spec §5.2 修订)
                 throw ProblemException(ProblemType.INVALID_CREDENTIALS, "refresh replay, family=$family revoked")
             }
             throw ProblemException(ProblemType.INVALID_CREDENTIALS, "unknown refresh token")
@@ -92,6 +99,7 @@ class TokenService(
         expiresAt: Instant,
     ) {
         repo.revokeFamily(sid)
+        revocations.revokeSid(sid, codec.accessTtl()) // 同 family 存量 access 立即失效(spec §5.2 修订)
         blacklistRemaining(jti, expiresAt)
     }
 
@@ -102,6 +110,8 @@ class TokenService(
         expiresAt: Instant,
     ) {
         repo.revokeAllFor(type, principalId)
+        // iat < 吊销秒的全部存量 access 立即失效;同秒签发为 spec §5.2 已接受的残余敞口
+        revocations.revokePrincipal(type, principalId, clock.instant(), codec.accessTtl())
         blacklistRemaining(currentJti, expiresAt)
     }
 
@@ -115,7 +125,7 @@ class TokenService(
         expiresAt: Instant,
     ) {
         val remaining = Duration.between(clock.instant(), expiresAt)
-        if (!remaining.isNegative && !remaining.isZero) blacklist.revoke(jti, remaining)
+        if (!remaining.isNegative && !remaining.isZero) revocations.revoke(jti, remaining)
     }
 
     private fun issueInFamily(
