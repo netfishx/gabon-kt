@@ -59,7 +59,7 @@
 | `payout_cents` bigint / `currency` char(3) | 按固定汇率配置换算的**快照**,正数/币种 check |
 | `payout_account` jsonb | `not null check (jsonb_typeof(payout_account) = 'object')`;收款要素不建模,透传渠道 SPI |
 | `channel_payout_no` text | 非空白 check(允许 null);部分唯一索引 `unique(channel, channel_payout_no) where channel_payout_no is not null` |
-| `review_memo` text(可空)/ `reviewed_by` bigint / `reviewed_at` timestamptz | check ①`reviewed_by`/`reviewed_at` 同空同非空;②`status = 1(PENDING) or reviewed_at is not null`(PENDING 之外各态必有审批留痕) |
+| `review_memo` text(可空)/ `reviewed_by` bigint / `reviewed_at` timestamptz | check ①`reviewed_by`/`reviewed_at` 同空同非空;②`(status = 1) = (reviewed_by is null)`(双向:PENDING ⟺ 无审批留痕——单向式会放过"回到 PENDING 却带留痕"的矛盾态,2026-07-03 质量评审收紧) |
 | `status` smallint | `1=PENDING 2=APPROVED 3=PROCESSING 4=SUCCESS 5=FAILED 6=REJECTED`(C2.4) |
 | 索引 | `(customer_id, id)`、`(status, id)`(admin 待审列表 keyset) |
 

@@ -6,9 +6,10 @@ create table recharge_package (
   diamonds    bigint   not null check (diamonds > 0),
   price_cents bigint   not null check (price_cents > 0),
   currency    char(3)  not null check (currency ~ '^[A-Z]{3}$'),
-  status      smallint not null default 1 check (status in (0, 1)),  -- 1=上架 0=下架
+  status      smallint not null default 1,  -- 1=上架 0=下架
   created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  updated_at  timestamptz not null default now(),
+  check (status in (0, 1))
 );
 create trigger trg_recharge_package_updated before update on recharge_package
   for each row execute function set_updated_at();
@@ -23,11 +24,12 @@ create table recharge_order (
   currency         char(3)  not null check (currency ~ '^[A-Z]{3}$'),
   channel          smallint not null check (channel > 0),
   channel_order_no text     check (channel_order_no ~ '\S'),
-  status           smallint not null default 1 check (status in (1, 2, 3, 4, 5)),
+  status           smallint not null default 1,
     -- 1=CREATED 2=PROCESSING 3=SUCCESS 4=FAILED 5=CANCELLED(C2.4)
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  unique (order_no)
+  unique (order_no),
+  check (status in (1, 2, 3, 4, 5))
 );
 create trigger trg_recharge_order_updated before update on recharge_order
   for each row execute function set_updated_at();
@@ -49,13 +51,14 @@ create table withdraw_order (
   review_memo       text,
   reviewed_by       bigint,
   reviewed_at       timestamptz,
-  status            smallint not null default 1 check (status in (1, 2, 3, 4, 5, 6)),
+  status            smallint not null default 1,
     -- 1=PENDING 2=APPROVED 3=PROCESSING 4=SUCCESS 5=FAILED 6=REJECTED(C2.4)
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
   unique (order_no),
   check ((reviewed_by is null) = (reviewed_at is null)),  -- 同空同非空
-  check (status = 1 or reviewed_at is not null)           -- PENDING 之外必有审批留痕
+  check ((status = 1) = (reviewed_by is null)),           -- 双向:PENDING ⟺ 无审批留痕
+  check (status in (1, 2, 3, 4, 5, 6))
 );
 create trigger trg_withdraw_order_updated before update on withdraw_order
   for each row execute function set_updated_at();
