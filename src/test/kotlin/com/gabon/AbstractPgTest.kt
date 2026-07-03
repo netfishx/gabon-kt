@@ -16,7 +16,10 @@ abstract class AbstractPgTest {
 
     @BeforeEach
     fun clean() {
-        dsl.execute("truncate ledger_entry, ledger_txn, outbox, inbox, account restart identity cascade")
+        dsl.execute(
+            "truncate ledger_entry, ledger_txn, outbox, inbox, account, refresh_token, admin_user, " +
+                "customer restart identity cascade",
+        )
     }
 
     companion object {

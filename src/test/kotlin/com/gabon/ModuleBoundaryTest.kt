@@ -71,6 +71,9 @@ class ModuleBoundaryTest {
                 "LedgerEntry" to "com.gabon.wallet.internal",
                 "Outbox" to "com.gabon.platform",
                 "Inbox" to "com.gabon.platform",
+                "Customer" to "com.gabon.identity.internal",
+                "AdminUser" to "com.gabon.identity.internal",
+                "RefreshToken" to "com.gabon.identity.internal",
             )
 
         private fun pkg(ctx: String) = "com.gabon.$ctx"
