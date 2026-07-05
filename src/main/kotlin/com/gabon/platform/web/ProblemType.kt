@@ -18,6 +18,7 @@ enum class ProblemType(
     FORBIDDEN(HttpStatus.FORBIDDEN, "/problems/forbidden", "Access denied"),
     USERNAME_TAKEN(HttpStatus.CONFLICT, "/problems/username-taken", "Username already taken"),
     INSUFFICIENT_BALANCE(HttpStatus.CONFLICT, "/problems/insufficient-balance", "Insufficient balance"),
+    PAYMENT_CHANNEL_ERROR(HttpStatus.BAD_GATEWAY, "/problems/payment-channel-error", "Channel error"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "/problems/rate-limited", "Too many requests"),
     VALIDATION(HttpStatus.BAD_REQUEST, "/problems/validation", "Invalid request"),
     AUTH_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "/problems/auth-store-unavailable", "Authentication store unavailable"),
