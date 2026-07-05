@@ -117,6 +117,8 @@ interface WalletLedgerApi {
 
 提交时 V1 deferred trigger 兜底(③层)。
 
+**锁序规范(2026-07-05 质量评审加固,实现约束)**:同一事务更新多个账户行时,锁序与业务方向无关——同一 customer 的 AVAILABLE 行恒先于 FROZEN 行,customer 行恒先于平台账户行;违反会在 freeze↔release 并发时形成 AB-BA 死锁(200 次并发实测 90% 命中,PG 报 deadlock detected 且败方冒 500)。守卫腿不必是第一腿:任一腿失败整个事务回滚,正确性由原子性保证,锁序只服务于免死锁。新增写方法必须遵守此序。
+
 ### 3.3 测试
 
 - 并发双 freeze(余额仅够一次)→ 恰一成功、恰一 `INSUFFICIENT_BALANCE`;

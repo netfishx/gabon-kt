@@ -16,6 +16,10 @@ class WalletLedgerFlowTest : AbstractIntegrationTest() {
     @Autowired
     lateinit var ledger: LedgerService
 
+    companion object {
+        private const val RACE_ROUNDS = 20
+    }
+
     @Test
     fun `freeze then settle moves funds through frozen to clearing`() {
         ledger.creditRecharge("CR-10", 10L, 1000)
@@ -116,6 +120,35 @@ class WalletLedgerFlowTest : AbstractIntegrationTest() {
         // 1000 − 400(freeze) + 300(release) + 10(reward) = 910;settle 只动 frozen
         assertThat(ledger.balanceOf(16L)).isEqualTo(910)
         assertThat(ledger.frozenOf(16L)).isEqualTo(0)
+        LedgerInvariants.assertHolds(dsl)
+    }
+
+    @Test
+    fun `concurrent freeze and release on one customer never deadlock`() {
+        ledger.creditRecharge("CR-17", 17L, 10_000)
+        repeat(RACE_ROUNDS) { i ->
+            ledger.freezeForWithdraw("W-17-old-$i", 17L, 100)
+            val outcomes = arrayOfNulls<Result<Boolean>>(2)
+            val start = CountDownLatch(1)
+            val threads =
+                listOf(
+                    thread {
+                        start.await()
+                        outcomes[0] = runCatching { ledger.freezeForWithdraw("W-17-new-$i", 17L, 100) }
+                    },
+                    thread {
+                        start.await()
+                        outcomes[1] = runCatching { ledger.releaseFrozen("W-17-old-$i", 17L, 100) }
+                    },
+                )
+            start.countDown()
+            threads.forEach { it.join() }
+            // 规范锁序下双方都必须成功;锁序反转时此处以 DeadlockLoserDataAccessException 失败(修复前 90% 命中)
+            assertThat(outcomes.map { it!!.getOrThrow() }).containsExactly(true, true)
+        }
+        // 每轮净效果:新冻结 +100、旧解冻归还 → frozen 累计 RACE_ROUNDS×100
+        assertThat(ledger.frozenOf(17L)).isEqualTo(RACE_ROUNDS * 100L)
+        assertThat(ledger.balanceOf(17L)).isEqualTo(10_000 - RACE_ROUNDS * 100L)
         LedgerInvariants.assertHolds(dsl)
     }
 }

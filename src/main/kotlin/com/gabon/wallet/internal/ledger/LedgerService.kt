@@ -24,6 +24,9 @@ const val BIZ_REWARD: Short = 5
 /**
  * 钱核:纯阻塞 + @Transactional,禁协程(B5.1)。写入统一收口(三层不变量①,spec §2.1):
  * 同构骨架 = 幂等门(txn 头冲突短路)→ 开户/守卫/投影 → postEntries 唯一分录入口。
+ *
+ * 锁序规范(spec §3.2):同一 customer 的 AVAILABLE 行恒先于 FROZEN 行,customer 行恒先于
+ * 平台账户行——与业务方向无关;违反会重现 freeze↔release 的 AB-BA 死锁。
  */
 @Service
 @Suppress("TooManyFunctions") // 五写方法 + 同构骨架私有件均需留在同一收口类内(ModuleBoundaryTest 锁定)
@@ -80,10 +83,12 @@ class LedgerService(
         diamonds: Long,
     ): Boolean =
         post(BIZ_WITHDRAW_RELEASE, withdrawNo, diamonds) {
-            val frozen = accountId(OWNER_CUSTOMER, customerId, AccountKind.FROZEN)
             val avail = accountId(OWNER_CUSTOMER, customerId, AccountKind.AVAILABLE)
-            guardedDebit(frozen, diamonds, "release $withdrawNo")
+            val frozen = accountId(OWNER_CUSTOMER, customerId, AccountKind.FROZEN)
+            // 锁序规范(spec §3.2):恒先 AVAILABLE 后 FROZEN,与 freeze 同序,杜绝 AB-BA 死锁;
+            // 守卫腿在后无碍——0 行抛出即整体回滚,avail 的 bump 一并消失
             bump(avail, diamonds)
+            guardedDebit(frozen, diamonds, "release $withdrawNo")
             listOf(frozen to -diamonds, avail to diamonds)
         }
 
