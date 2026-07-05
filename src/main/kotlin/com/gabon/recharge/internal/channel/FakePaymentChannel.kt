@@ -78,7 +78,7 @@ class FakePaymentChannel(
                             .takeIf { it.isString }
                             ?.asString()
                             ?.takeIf { s -> s.isNotBlank() },
-                    reason = node.path("reason").asString("failed"),
+                    reason = node.path("reason").asString("failed").takeIf { s -> s.isNotBlank() } ?: "failed",
                 )
             else -> PaymentCallback.Ignored(externalId) // pending/unknown → ack,不落 inbox,不动状态(spec §5.2)
         }

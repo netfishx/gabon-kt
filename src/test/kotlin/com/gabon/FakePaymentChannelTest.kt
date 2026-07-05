@@ -45,6 +45,10 @@ class FakePaymentChannelTest {
             .isInstanceOfSatisfying(ProblemException::class.java) { assertThat(it.type).isEqualTo(ProblemType.UNAUTHENTICATED) }
         assertThatThrownBy { channel.verifyAndParse(body.toByteArray(), emptyMap()) }
             .isInstanceOfSatisfying(ProblemException::class.java) { assertThat(it.type).isEqualTo(ProblemType.UNAUTHENTICATED) }
+        // 等长异值:64 位合法 hex 但对不上——真正的常数时间比较分支
+        val other = sign("""{"externalId":"E4","orderNo":"R-4","status":"FAILED"}""")
+        assertThatThrownBy { channel.verifyAndParse(body.toByteArray(), mapOf("x-fake-signature" to other)) }
+            .isInstanceOfSatisfying(ProblemException::class.java) { assertThat(it.type).isEqualTo(ProblemType.UNAUTHENTICATED) }
     }
 
     @Test
@@ -59,6 +63,19 @@ class FakePaymentChannelTest {
         val blankNo = """{"externalId":"E6","orderNo":"R-6","status":"SUCCESS","channelOrderNo":"  ","paidCents":1,"currency":"CNY"}"""
         assertThatThrownBy { channel.verifyAndParse(blankNo.toByteArray(), mapOf("x-fake-signature" to sign(blankNo))) }
             .isInstanceOfSatisfying(ProblemException::class.java) { assertThat(it.type).isEqualTo(ProblemType.VALIDATION) }
+    }
+
+    @Test
+    fun `create payment yields deterministic channel order number and pay url`() {
+        val instruction = channel.createPayment(PaymentOrderSnapshot("R-9", 1_000, "CNY"))
+        assertThat(instruction.channelOrderNo).isEqualTo("FAKE-R-9")
+        assertThat(instruction.payload).containsKey("payUrl")
+    }
+
+    @Test
+    fun `enabled fake channel without secret fails fast`() {
+        assertThatThrownBy { FakePaymentChannel(FakeChannelProps(enabled = true, secret = " "), ObjectMapper()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
     }
 
     @Test
