@@ -45,6 +45,9 @@ class SecurityConfig {
                     registry.requestMatchers(route).permitAll()
                 }
                 registry.requestMatchers("/v1/admin/**").hasRole("ADMIN")
+                // C 端资金路由只许 CUSTOMER(spec §7.2-3,堵 admin token 串门);
+                // 回调精确模式经 contributor 在上方先行 permitAll(spec §7.2-1)
+                registry.requestMatchers("/v1/recharge/**").hasRole("CUSTOMER")
                 registry.anyRequest().authenticated()
             }.exceptionHandling {
                 it.authenticationEntryPoint { _, response, _ ->

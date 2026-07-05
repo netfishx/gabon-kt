@@ -334,6 +334,10 @@ class FakePaymentChannelTest {
         val noAmount = """{"externalId":"E5","orderNo":"R-5","status":"SUCCESS","channelOrderNo":"F-5"}"""
         assertThatThrownBy { channel.verifyAndParse(noAmount.toByteArray(), mapOf("x-fake-signature" to sign(noAmount))) }
             .isInstanceOfSatisfying(ProblemException::class.java) { assertThat(it.type).isEqualTo(ProblemType.VALIDATION) }
+        // 空白渠道号 = 缺失(V3 非空白 check,放行会炸 DB 约束成 500)
+        val blankNo = """{"externalId":"E6","orderNo":"R-6","status":"SUCCESS","channelOrderNo":"  ","paidCents":1,"currency":"CNY"}"""
+        assertThatThrownBy { channel.verifyAndParse(blankNo.toByteArray(), mapOf("x-fake-signature" to sign(blankNo))) }
+            .isInstanceOfSatisfying(ProblemException::class.java) { assertThat(it.type).isEqualTo(ProblemType.VALIDATION) }
     }
 
     @Test
@@ -550,7 +554,8 @@ class FakePaymentChannel(
                 PaymentCallback.Failure(
                     externalId = externalId,
                     orderNo = node.requiredText("orderNo"),
-                    channelOrderNo = node.path("channelOrderNo").takeIf { it.isTextual }?.asString(),
+                    // 空白视同缺失:V3 对 channel_order_no 有非空白 check,空串流入会在回填时炸 DB 约束成 500
+                    channelOrderNo = node.path("channelOrderNo").takeIf { it.isTextual }?.asString()?.takeIf { s -> s.isNotBlank() },
                     reason = node.path("reason").asString("failed"),
                 )
             else -> PaymentCallback.Ignored(externalId) // pending/unknown → ack,不落 inbox,不动状态(spec §5.2)
@@ -562,8 +567,9 @@ class FakePaymentChannel(
             Mac.getInstance(HMAC_ALG).apply { init(SecretKeySpec(props.secret.toByteArray(), HMAC_ALG)) }.doFinal(body),
         )
 
+    /** 非空白必填文本:V3 对 order_no/channel_order_no 有非空白 check,空串放进流程会炸 DB 约束成 500。 */
     private fun JsonNode.requiredText(field: String): String =
-        path(field).takeIf { it.isTextual }?.asString()
+        path(field).takeIf { it.isTextual }?.asString()?.takeIf { s -> s.isNotBlank() }
             ?: throw ProblemException(ProblemType.VALIDATION, "fake callback missing text field: $field")
 
     private fun JsonNode.requiredLong(field: String): Long =
@@ -997,7 +1003,8 @@ git commit -m "feat: add recharge order creation and listing"
 
 **Acceptance Criteria:**
 - [ ] 成功回调入账一次(重复/并发重复只入账一次),`CREATED` 直收成功回调可入账并回填渠道号
-- [ ] 金额错配/渠道号错配 → 2xx ack + 不落 inbox + 不改状态 + 不入账;终态冲突 → 2xx + WARN 不翻案
+- [ ] 金额错配/渠道号错配/**渠道归属错配(order.channel ≠ 路径 channel)** → 2xx ack + 不落 inbox + 不改状态 + 不入账;终态冲突 → 2xx + WARN 不翻案
+- [ ] 渠道号回填与校验是单条条件 UPDATE(无并发绕行窗口)
 - [ ] 验签失败 401、解析失败 400,均不落 inbox;`PENDING` → 2xx 且 inbox 空
 - [ ] 同 `external_id` 跨域 source 不互吞(source = 1000 + channel)
 - [ ] 资金用例终局 `LedgerInvariants.assertHolds`;`./gradlew check` 全绿
@@ -1142,6 +1149,16 @@ class RechargeCallbackTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `callback on another channels order acks without side effects`() {
+        // 渠道归属校验:渠道 1 的合法签名不得结算 channel=2 的订单(多渠道横向越权)
+        val o = seedOrder(customerId = 29L, diamonds = 100, priceCents = 1_000, status = ORDER_PROCESSING, channelOrderNo = "F-29", channel = 2)
+        postCallback(success(o, externalId = "E-29")).andExpect(status().isOk)
+        assertThat(statusOf(o.id)).isEqualTo(ORDER_PROCESSING)
+        assertThat(wallet.balanceOf(29L)).isEqualTo(0)
+        assertThat(dsl.fetchCount(INBOX)).isEqualTo(0)
+    }
+
+    @Test
     fun `failure with mismatched channel number acks without failing the order`() {
         // 带号 Failure 必须过同一渠道号校验(spec §4.3-2),不得绕过一致性直接打 FAILED
         val o = seedOrder(customerId = 28L, diamonds = 100, priceCents = 1_000, status = ORDER_PROCESSING, channelOrderNo = "F-28")
@@ -1171,6 +1188,7 @@ class RechargeCallbackTest : AbstractIntegrationTest() {
         priceCents: Long,
         status: Short,
         channelOrderNo: String?,
+        channel: Short = 1,
     ): Seeded {
         val orderNo = "R-T$customerId"
         val id =
@@ -1182,7 +1200,7 @@ class RechargeCallbackTest : AbstractIntegrationTest() {
                 .set(RECHARGE_ORDER.DIAMONDS, diamonds)
                 .set(RECHARGE_ORDER.PRICE_CENTS, priceCents)
                 .set(RECHARGE_ORDER.CURRENCY, "CNY")
-                .set(RECHARGE_ORDER.CHANNEL, 1)
+                .set(RECHARGE_ORDER.CHANNEL, channel)
                 .set(RECHARGE_ORDER.CHANNEL_ORDER_NO, channelOrderNo)
                 .set(RECHARGE_ORDER.STATUS, status)
                 .returningResult(RECHARGE_ORDER.ID)
@@ -1302,6 +1320,7 @@ class InboxRepo(
         val diamonds: Long,
         val priceCents: Long,
         val currency: String,
+        val channel: Short,
         val channelOrderNo: String?,
     )
 
@@ -1313,22 +1332,29 @@ class InboxRepo(
                 RECHARGE_ORDER.DIAMONDS,
                 RECHARGE_ORDER.PRICE_CENTS,
                 RECHARGE_ORDER.CURRENCY,
+                RECHARGE_ORDER.CHANNEL,
                 RECHARGE_ORDER.CHANNEL_ORDER_NO,
             ).from(RECHARGE_ORDER)
             .where(RECHARGE_ORDER.ORDER_NO.eq(orderNo))
             .fetchOne()
-            ?.let { CallbackRow(it.value1()!!, it.value2()!!, it.value3()!!, it.value4()!!, it.value5()!!, it.value6()) }
+            ?.let { CallbackRow(it.value1()!!, it.value2()!!, it.value3()!!, it.value4()!!, it.value5()!!, it.value6()!!, it.value7()) }
 
-    /** 渠道号回填(spec §4.3-2):仅本地为空时写入(两步下单第二步崩溃场景)。 */
-    fun backfillChannelOrderNo(
+    /**
+     * 渠道号回填/校验一体(spec §4.3-2):为空则写入、已有则须相同——单条条件 UPDATE 原子完成,
+     * 无"读 null → 回填 0 行仍放行"的并发窗口;1 行 = 回填或同值重写(无害),0 行 = 错配。
+     */
+    fun reconcileChannelOrderNo(
         id: Long,
         channelOrderNo: String,
     ): Int =
         dsl
             .update(RECHARGE_ORDER)
             .set(RECHARGE_ORDER.CHANNEL_ORDER_NO, channelOrderNo)
-            .where(RECHARGE_ORDER.ID.eq(id).and(RECHARGE_ORDER.CHANNEL_ORDER_NO.isNull))
-            .execute()
+            .where(
+                RECHARGE_ORDER.ID
+                    .eq(id)
+                    .and(RECHARGE_ORDER.CHANNEL_ORDER_NO.isNull.or(RECHARGE_ORDER.CHANNEL_ORDER_NO.eq(channelOrderNo))),
+            ).execute()
 
     /** 宽 CAS(spec §4.3-4):CREATED|PROCESSING → 终态;0 行 = 已在终态(冲突由调用方 WARN + ack)。 */
     fun casToTerminal(
@@ -1373,6 +1399,10 @@ class InboxRepo(
         cb: PaymentCallback.Success,
     ) {
         val order = orders.findByOrderNo(cb.orderNo) ?: return anomaly("unknown-order", "orderNo=${cb.orderNo}")
+        // 渠道归属校验(安全关键):防"渠道 B 的合法签名结算渠道 A 的订单"(多渠道横向越权)
+        if (order.channel != channelCode) {
+            return anomaly("channel-mismatch", "orderNo=${cb.orderNo} pathChannel=$channelCode orderChannel=${order.channel}")
+        }
         // 金额币种校验(安全关键,spec §4.3-1):防"真实小额支付回调错配到大额订单"入账
         if (cb.paidCents != order.priceCents || cb.currency != order.currency) {
             return anomaly("amount-mismatch", "orderNo=${cb.orderNo} paid=${cb.paidCents}${cb.currency} expect=${order.priceCents}${order.currency}")
@@ -1393,6 +1423,9 @@ class InboxRepo(
         cb: PaymentCallback.Failure,
     ) {
         val order = orders.findByOrderNo(cb.orderNo) ?: return anomaly("unknown-order", "orderNo=${cb.orderNo}")
+        if (order.channel != channelCode) {
+            return anomaly("channel-mismatch", "orderNo=${cb.orderNo} pathChannel=$channelCode orderChannel=${order.channel}")
+        }
         // Failure 无金额字段;渠道号带了就必须过同一校验(spec §4.3-2)
         if (!reconcileChannelOrderNo(order, cb.channelOrderNo)) {
             return anomaly("channel-no-mismatch", "orderNo=${cb.orderNo} got=${cb.channelOrderNo} local=${order.channelOrderNo}")
@@ -1403,17 +1436,13 @@ class InboxRepo(
         }
     }
 
-    /** 渠道号回填/校验(spec §4.3-2):本地为空 → 同事务回填;已有且不同 → 错配。 */
+    /** 渠道号回填/校验(spec §4.3-2):单条条件 UPDATE 原子完成"为空则写入/已有则须相同",0 行 = 错配。 */
     private fun reconcileChannelOrderNo(
         order: RechargeOrderRepository.CallbackRow,
         channelOrderNo: String?,
     ): Boolean {
         if (channelOrderNo == null) return true
-        val existing = order.channelOrderNo ?: run {
-            orders.backfillChannelOrderNo(order.id, channelOrderNo)
-            return true
-        }
-        return existing == channelOrderNo
+        return orders.reconcileChannelOrderNo(order.id, channelOrderNo) == 1
     }
 
     /** 错配/查无此单:签名已过说明源头在渠道侧,ERROR + 指标 + 正常返回(2xx,重试不会变对,spec §4.3-1)。 */
@@ -1493,7 +1522,7 @@ class RechargeCallbackController(
 
 - [ ] **Step 6: 验证绿 + 全量**
 
-Run: `./gradlew test --tests "com.gabon.RechargeCallbackTest"` → PASS(10 tests)
+Run: `./gradlew test --tests "com.gabon.RechargeCallbackTest"` → PASS(11 tests)
 Run: `./gradlew check` → BUILD SUCCESSFUL
 
 - [ ] **Step 7: Commit**
