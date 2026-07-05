@@ -22,7 +22,7 @@ class CoroutineBoundaryTest : AbstractIntegrationTest() {
     fun `suspend orchestration fans out over blocking services`() {
         runBlocking {
             val customer = 300L
-            ledger.creditRecharge(customer, 250, "CR-3") // 阻塞 @Transactional 钱核
+            ledger.creditRecharge("CR-3", customer, 250) // 阻塞 @Transactional 钱核
 
             val view = feed.assemble(customer) // suspend 编排 + 结构化并发
 

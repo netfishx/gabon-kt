@@ -191,6 +191,41 @@ class ModuleBoundaryTest {
             .check(classes)
     }
 
+    /**
+     * 三层不变量①收口钉子(钱核 spec §3.2-4):分录只能经 LedgerService.postEntries 写入——
+     * 除 LedgerService 外任何生产类(含 wallet.internal 其它类)不得触碰 LedgerEntry 表类。
+     * 表所有权(规则 6)只限到 wallet.internal 包,本规则收窄到单类;测试类不受限(探针在测试层)。
+     */
+    @Test
+    fun `ledger entry table is funneled through ledger service`() {
+        val onlyLedgerService =
+            object : ArchCondition<JavaClass>("not touch LedgerEntry outside LedgerService") {
+                override fun check(
+                    clazz: JavaClass,
+                    events: ConditionEvents,
+                ) {
+                    if (clazz.fullName == "com.gabon.wallet.internal.ledger.LedgerService") return
+                    val candidates =
+                        clazz.directDependenciesFromSelf.asSequence().map { it.targetClass } +
+                            clazz.methodCallsFromSelf.asSequence().map { it.target.rawReturnType } +
+                            clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
+                    if (candidates.any { tableNameOf(it) == "LedgerEntry" }) {
+                        events.add(
+                            SimpleConditionEvent.violated(
+                                clazz,
+                                "${clazz.name} 触碰 LedgerEntry:分录只能经 LedgerService.postEntries 写入(spec §3.2-4)",
+                            ),
+                        )
+                    }
+                }
+            }
+        classes()
+            .that()
+            .resideOutsideOfPackage("com.gabon.jooq..")
+            .should(onlyLedgerService)
+            .check(classes)
+    }
+
     /** 规则 6 完整性:codegen 产出的每个表类必须在 TABLE_OWNER 登记——新迁移没登记就失败,不依赖是否已有业务代码引用(spec §4) */
     @Test
     fun `every jooq table class has a registered owner`() {

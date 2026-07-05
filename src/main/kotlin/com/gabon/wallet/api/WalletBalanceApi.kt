@@ -10,4 +10,9 @@ interface WalletBalanceApi {
      * - 单位为钻石整数,与 `account.balance` 列语义一致。
      */
     fun balanceOf(customerId: Long): Long
+
+    /**
+     * 读取客户冻结中余额(提现在途)。契约同 balanceOf:账户不存在返回 0。
+     */
+    fun frozenOf(customerId: Long): Long
 }

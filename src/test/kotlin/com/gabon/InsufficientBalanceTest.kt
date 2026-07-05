@@ -21,7 +21,7 @@ class InsufficientBalanceTest : AbstractIntegrationTest() {
     @Test
     fun `deduct beyond balance fails and leaves balance intact`() {
         val customer = 200L
-        ledger.creditRecharge(customer, 100, "CR-2")
+        ledger.creditRecharge("CR-2", customer, 100)
 
         assertThatThrownBy { guardedDeduct(customer, 500) }
             .isInstanceOf(IllegalArgumentException::class.java)
