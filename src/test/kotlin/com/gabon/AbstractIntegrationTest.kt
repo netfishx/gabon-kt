@@ -82,6 +82,8 @@ abstract class AbstractIntegrationTest {
             // Task 2/3 的 @ConfigurationProperties 才消费，现在注册无害。
             registry.add("gabon.security.jwt.secret-base64") { "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
             registry.add("gabon.security.totp.kek-base64") { "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+            registry.add("gabon.channel.fake.enabled") { "true" }
+            registry.add("gabon.channel.fake.secret") { "test-channel-secret" }
         }
     }
 }
