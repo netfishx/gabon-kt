@@ -30,13 +30,13 @@ class AppRoleGuardTest : AbstractIntegrationTest() {
                 .set(LEDGER_ENTRY.AMOUNT, 0L)
                 .where(LEDGER_ENTRY.ID.eq(entryId))
                 .execute()
-        }.hasStackTraceContaining("permission denied")
+        }.hasStackTraceContaining("permission denied for table ledger_entry")
         assertThatThrownBy {
             dsl.deleteFrom(LEDGER_ENTRY).where(LEDGER_ENTRY.ID.eq(entryId)).execute()
-        }.hasStackTraceContaining("permission denied")
+        }.hasStackTraceContaining("permission denied for table ledger_entry")
         assertThatThrownBy {
             dsl.update(LEDGER_TXN).set(LEDGER_TXN.MEMO, "tampered").execute()
-        }.hasStackTraceContaining("permission denied")
+        }.hasStackTraceContaining("permission denied for table ledger_txn")
     }
 
     @Test

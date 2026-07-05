@@ -1,5 +1,6 @@
 package com.gabon
 
+import org.jooq.CloseableDSLContext
 import org.jooq.DSLContext
 import org.jooq.impl.DSL
 import org.junit.jupiter.api.BeforeEach
@@ -43,7 +44,7 @@ abstract class AbstractIntegrationTest {
             PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine")).apply {
                 start()
                 // 预建 app role(spec §2.3 生产推荐二选一之"预先创建");V4 只授权
-                createConnection("").use { it.createStatement().execute("create role gabon_app login password 'test'") }
+                createConnection("").use { it.createStatement().execute("create role $APP_ROLE login password '$APP_PASSWORD'") }
             }
         // 表由 Boot 启动时自动迁移（spring-boot-starter-flyway），不再手动 migrate
 
@@ -54,15 +55,23 @@ abstract class AbstractIntegrationTest {
                 .withExposedPorts(VALKEY_PORT)
                 .apply { start() }
 
+        private const val APP_ROLE = "gabon_app"
+        private const val APP_PASSWORD = "test"
+
+        /**
+         * owner 单连接(CloseableDSLContext,非池化):全 JVM 生命周期供 truncate/越权种子使用,
+         * 有意不 close(JVM 退出回收,与单例容器同寿);中途失效会连锁炸全部测试——
+         * 若出现,先查 PG 容器健康,再考虑挂 shutdown hook/改池化。
+         */
         @JvmStatic
-        private val ownerDslStatic: DSLContext by lazy { DSL.using(pg.jdbcUrl, pg.username, pg.password) }
+        private val ownerDslStatic: CloseableDSLContext by lazy { DSL.using(pg.jdbcUrl, pg.username, pg.password) }
 
         @JvmStatic
         @DynamicPropertySource
         fun containers(registry: DynamicPropertyRegistry) {
             registry.add("spring.datasource.url") { pg.jdbcUrl }
-            registry.add("spring.datasource.username") { "gabon_app" }
-            registry.add("spring.datasource.password") { "test" }
+            registry.add("spring.datasource.username") { APP_ROLE }
+            registry.add("spring.datasource.password") { APP_PASSWORD }
             // Flyway 显式走 owner,不与 datasource 混用(spec §2.3 连接拓扑)
             registry.add("spring.flyway.url") { pg.jdbcUrl }
             registry.add("spring.flyway.user") { pg.username }

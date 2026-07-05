@@ -13,12 +13,14 @@ wallet:
 ---
 # 生产配置契约(spec §2.3 连接拓扑):runtime=gabon_app,迁移走 owner;
 # owner 必须与 codegen/测试一致(V4 alter default privileges 的生效前提)。
-# 任一 env 缺失 → 占位符解析失败 → 启动失败(fail fast),不会静默用 owner 跑业务。
+# 任一 GABON_DB_* env 缺失 → 占位符原样透传 → datasource 初始化失败 → 启动失败(fail fast);
+# 失败消息不点名 env(Boot 非严格解析),排查先核对 GABON_DB_* 四件套(见 ProdProfileContractTest)。
 spring:
   config:
     activate:
       on-profile: prod
   datasource:
+    url: ${GABON_DB_URL}      # owner/app 同库;flyway 未配 url 时沿用此 url、仅换凭据(Boot 行为)
     username: gabon_app
     password: ${GABON_DB_APP_PASSWORD}
   flyway:
