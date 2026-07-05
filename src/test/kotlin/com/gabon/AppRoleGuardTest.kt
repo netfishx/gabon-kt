@@ -37,6 +37,9 @@ class AppRoleGuardTest : AbstractIntegrationTest() {
         assertThatThrownBy {
             dsl.update(LEDGER_TXN).set(LEDGER_TXN.MEMO, "tampered").execute()
         }.hasStackTraceContaining("permission denied for table ledger_txn")
+        assertThatThrownBy {
+            dsl.deleteFrom(LEDGER_TXN).execute()
+        }.hasStackTraceContaining("permission denied for table ledger_txn")
     }
 
     @Test
