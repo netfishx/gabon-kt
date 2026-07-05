@@ -1,5 +1,6 @@
 package com.gabon
 
+import com.gabon.wallet.internal.ledger.LedgerService
 import com.tngtech.archunit.core.domain.JavaClass
 import com.tngtech.archunit.core.importer.ClassFileImporter
 import com.tngtech.archunit.lang.ArchCondition
@@ -94,6 +95,12 @@ class ModuleBoundaryTest {
                 target.simpleName.removeSuffix("Record").removeSuffix("Path")
             }
         }
+
+        /** 三路候选收集:类级依赖 + 方法调用返回型 + 字段访问型(两条表规则共用)。 */
+        private fun candidatesOf(clazz: JavaClass) =
+            clazz.directDependenciesFromSelf.asSequence().map { it.targetClass } +
+                clazz.methodCallsFromSelf.asSequence().map { it.target.rawReturnType } +
+                clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
     }
 
     /** 规则 1:任何上下文不得触碰他人 internal(与规则 3 独立断言,报错信息更准) */
@@ -159,11 +166,7 @@ class ModuleBoundaryTest {
                     clazz: JavaClass,
                     events: ConditionEvents,
                 ) {
-                    val candidates =
-                        clazz.directDependenciesFromSelf.asSequence().map { it.targetClass } +
-                            clazz.methodCallsFromSelf.asSequence().map { it.target.rawReturnType } +
-                            clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
-                    candidates.forEach { target ->
+                    candidatesOf(clazz).forEach { target ->
                         val tableName = tableNameOf(target) ?: return@forEach
                         val allowed = TABLE_OWNER[tableName]
                         if (allowed == null) {
@@ -204,12 +207,8 @@ class ModuleBoundaryTest {
                     clazz: JavaClass,
                     events: ConditionEvents,
                 ) {
-                    if (clazz.fullName == "com.gabon.wallet.internal.ledger.LedgerService") return
-                    val candidates =
-                        clazz.directDependenciesFromSelf.asSequence().map { it.targetClass } +
-                            clazz.methodCallsFromSelf.asSequence().map { it.target.rawReturnType } +
-                            clazz.fieldAccessesFromSelf.asSequence().map { it.target.rawType }
-                    if (candidates.any { tableNameOf(it) == "LedgerEntry" }) {
+                    if (clazz.isEquivalentTo(LedgerService::class.java)) return
+                    if (candidatesOf(clazz).any { tableNameOf(it) == "LedgerEntry" }) {
                         events.add(
                             SimpleConditionEvent.violated(
                                 clazz,

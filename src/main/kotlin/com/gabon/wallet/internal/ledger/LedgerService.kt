@@ -3,6 +3,8 @@ package com.gabon.wallet.internal.ledger
 import com.gabon.jooq.tables.references.ACCOUNT
 import com.gabon.jooq.tables.references.LEDGER_ENTRY
 import com.gabon.jooq.tables.references.LEDGER_TXN
+import com.gabon.platform.web.ProblemException
+import com.gabon.platform.web.ProblemType
 import com.gabon.wallet.api.WalletBalanceApi
 import com.gabon.wallet.api.WalletLedgerApi
 import org.jooq.DSLContext
@@ -24,6 +26,7 @@ const val BIZ_REWARD: Short = 5
  * 同构骨架 = 幂等门(txn 头冲突短路)→ 开户/守卫/投影 → postEntries 唯一分录入口。
  */
 @Service
+@Suppress("TooManyFunctions") // 五写方法 + 同构骨架私有件均需留在同一收口类内(ModuleBoundaryTest 锁定)
 class LedgerService(
     private val dsl: DSLContext,
 ) : WalletBalanceApi,
@@ -40,6 +43,62 @@ class LedgerService(
             bump(avail, diamonds)
             bump(clearing, -diamonds)
             listOf(avail to diamonds, clearing to -diamonds)
+        }
+
+    @Transactional
+    override fun freezeForWithdraw(
+        withdrawNo: String,
+        customerId: Long,
+        diamonds: Long,
+    ): Boolean =
+        post(BIZ_WITHDRAW_FREEZE, withdrawNo, diamonds) {
+            val avail = accountId(OWNER_CUSTOMER, customerId, AccountKind.AVAILABLE)
+            val frozen = accountId(OWNER_CUSTOMER, customerId, AccountKind.FROZEN)
+            guardedDebit(avail, diamonds, "freeze $withdrawNo")
+            bump(frozen, diamonds)
+            listOf(avail to -diamonds, frozen to diamonds)
+        }
+
+    @Transactional
+    override fun settleWithdraw(
+        withdrawNo: String,
+        customerId: Long,
+        diamonds: Long,
+    ): Boolean =
+        post(BIZ_WITHDRAW_SETTLE, withdrawNo, diamonds) {
+            val frozen = accountId(OWNER_CUSTOMER, customerId, AccountKind.FROZEN)
+            val clearing = accountId(OWNER_PLATFORM, 0, AccountKind.PAYOUT_CLEARING)
+            guardedDebit(frozen, diamonds, "settle $withdrawNo")
+            bump(clearing, diamonds)
+            listOf(frozen to -diamonds, clearing to diamonds)
+        }
+
+    @Transactional
+    override fun releaseFrozen(
+        withdrawNo: String,
+        customerId: Long,
+        diamonds: Long,
+    ): Boolean =
+        post(BIZ_WITHDRAW_RELEASE, withdrawNo, diamonds) {
+            val frozen = accountId(OWNER_CUSTOMER, customerId, AccountKind.FROZEN)
+            val avail = accountId(OWNER_CUSTOMER, customerId, AccountKind.AVAILABLE)
+            guardedDebit(frozen, diamonds, "release $withdrawNo")
+            bump(avail, diamonds)
+            listOf(frozen to -diamonds, avail to diamonds)
+        }
+
+    @Transactional
+    override fun grantReward(
+        rewardNo: String,
+        customerId: Long,
+        diamonds: Long,
+    ): Boolean =
+        post(BIZ_REWARD, rewardNo, diamonds) {
+            val avail = accountId(OWNER_CUSTOMER, customerId, AccountKind.AVAILABLE)
+            val equity = accountId(OWNER_PLATFORM, 0, AccountKind.PLATFORM_EQUITY)
+            bump(avail, diamonds)
+            bump(equity, -diamonds)
+            listOf(avail to diamonds, equity to -diamonds)
         }
 
     override fun balanceOf(customerId: Long): Long = projected(customerId, AccountKind.AVAILABLE)
@@ -84,6 +143,22 @@ class LedgerService(
                 dsl.insertInto(LEDGER_ENTRY, LEDGER_ENTRY.TXN_ID, LEDGER_ENTRY.ACCOUNT_ID, LEDGER_ENTRY.AMOUNT),
             ) { insert, (accountId, amount) -> insert.values(txnId, accountId, amount) }
             .execute()
+    }
+
+    /** 守卫扣减:0 行 = 余额不足 → 409 problem(spec §3.1);仅用于 customer 非负账户。 */
+    private fun guardedDebit(
+        accountId: Long,
+        amount: Long,
+        context: String,
+    ) {
+        val rows =
+            dsl
+                .update(ACCOUNT)
+                .set(ACCOUNT.BALANCE, ACCOUNT.BALANCE.minus(amount))
+                .set(ACCOUNT.VERSION, ACCOUNT.VERSION.plus(1))
+                .where(ACCOUNT.ID.eq(accountId).and(ACCOUNT.BALANCE.ge(amount)))
+                .execute()
+        if (rows != 1) throw ProblemException(ProblemType.INSUFFICIENT_BALANCE, "$context: account=$accountId amount=$amount")
     }
 
     private fun bump(
