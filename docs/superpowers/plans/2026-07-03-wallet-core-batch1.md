@@ -162,7 +162,7 @@ git commit -m "feat: add wallet order tables with ownership"
 - Create: `src/main/resources/db/migration/V4__app_role_grants.sql`
 - Create: `src/test/kotlin/com/gabon/AppRoleGuardTest.kt`
 - Modify: `src/test/kotlin/com/gabon/AbstractIntegrationTest.kt`
-- Modify: `src/main/resources/application.yml`(flyway 段注释)
+- Modify: `src/main/resources/application.yml`(追加 prod profile 配置契约)
 
 **Acceptance Criteria:**
 - [ ] `gabon_app` 对 `ledger_txn`/`ledger_entry` UPDATE/DELETE 被权限拒(探针钉死)
