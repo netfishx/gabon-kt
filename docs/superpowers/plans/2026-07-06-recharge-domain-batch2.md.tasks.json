@@ -4,13 +4,13 @@
     {
       "id": 1,
       "subject": "Task 1: 档位列表 + CUSTOMER 角色门",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** GET /v1/recharge/packages 端点与 /v1/recharge/** 的 CUSTOMER 角色规则落地,recharge internal 出现真实类(删 internal marker)。\n\n**Files:**\n- Create: src/main/kotlin/com/gabon/recharge/internal/RechargePackageRepository.kt\n- Create: src/main/kotlin/com/gabon/recharge/internal/web/RechargeController.kt\n- Create: src/main/kotlin/com/gabon/recharge/internal/web/RechargeDtos.kt\n- Modify: src/main/kotlin/com/gabon/platform/security/SecurityConfig.kt\n- Delete: src/main/kotlin/com/gabon/recharge/internal/RechargeInternalMarker.kt\n- Create: src/test/kotlin/com/gabon/RechargeFlowTest.kt\n\n**Acceptance Criteria:**\n- customer 票据可列上架档位(价格升序,下架不出现)\n- admin 票据访问 /v1/recharge/** → 403;无票 → 401\n- ./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"files\": [\"src/main/kotlin/com/gabon/recharge/internal/RechargePackageRepository.kt\", \"src/main/kotlin/com/gabon/recharge/internal/web/RechargeController.kt\", \"src/main/kotlin/com/gabon/recharge/internal/web/RechargeDtos.kt\", \"src/main/kotlin/com/gabon/platform/security/SecurityConfig.kt\", \"src/main/kotlin/com/gabon/recharge/internal/RechargeInternalMarker.kt\", \"src/test/kotlin/com/gabon/RechargeFlowTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"active packages listed ascending by price\", \"admin token 403 on recharge routes\", \"check green\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: 渠道 SPI + 假渠道",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1
       ],
@@ -19,7 +19,7 @@
     {
       "id": 3,
       "subject": "Task 3: 两步下单 + 订单列表",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -28,12 +28,12 @@
     {
       "id": 4,
       "subject": "Task 4: 回调入账全链路",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         3
       ],
       "description": "**Goal:** 公开回调端点:验签 → 金额/渠道号校验 → inbox 去重(platform 收口)+ 宽 CAS + creditRecharge 同一事务;异常路径全部 ack + 结构化日志 + 指标。\n\n**Files:**\n- Create: src/main/kotlin/com/gabon/platform/outbox/InboxRepo.kt\n- Create: src/main/kotlin/com/gabon/recharge/internal/web/RechargeCallbackController.kt\n- Create: src/main/kotlin/com/gabon/recharge/internal/RechargePublicRoutes.kt\n- Modify: src/main/kotlin/com/gabon/recharge/internal/RechargeService.kt\n- Modify: src/main/kotlin/com/gabon/recharge/internal/RechargeOrderRepository.kt\n- Create: src/test/kotlin/com/gabon/RechargeCallbackTest.kt\n\n**Acceptance Criteria:**\n- 成功回调入账一次(重复/并发重复只入账一次);CREATED 直收可入账并回填渠道号\n- 金额/渠道号/渠道归属错配(order.channel ≠ 路径 channel)→ ack 无副作用;终态冲突不翻案\n- 渠道号回填与校验是单条条件 UPDATE(无并发绕行窗口)\n- 验签失败 401、解析失败 400 不落 inbox;PENDING → 2xx 且 inbox 空\n- 跨 source 命名空间不互吞(source = 1000 + channel)\n- 资金用例终局 LedgerInvariants;./gradlew check 全绿\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"files\": [\"src/main/kotlin/com/gabon/platform/outbox/InboxRepo.kt\", \"src/main/kotlin/com/gabon/recharge/internal/web/RechargeCallbackController.kt\", \"src/main/kotlin/com/gabon/recharge/internal/RechargePublicRoutes.kt\", \"src/main/kotlin/com/gabon/recharge/internal/RechargeService.kt\", \"src/main/kotlin/com/gabon/recharge/internal/RechargeOrderRepository.kt\", \"src/test/kotlin/com/gabon/RechargeCallbackTest.kt\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"duplicate and concurrent callbacks credit once\", \"channel ownership amount and channel-no mismatches ack without side effects\", \"reconcile is a single conditional update\", \"terminal conflict never flips\", \"cross-source dedup independent\", \"invariants hold and check green\"], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-06"
+  "lastUpdated": "2026-07-07"
 }
