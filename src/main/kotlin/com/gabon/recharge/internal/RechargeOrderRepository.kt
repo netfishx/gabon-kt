@@ -84,4 +84,57 @@ class RechargeOrderRepository(
             .fetch()
             .map { OrderRow(it.value1()!!, it.value2()!!, it.value3()!!, it.value4()!!, it.value5()!!, it.value6()!!) }
     }
+
+    data class CallbackRow(
+        val id: Long,
+        val customerId: Long,
+        val diamonds: Long,
+        val priceCents: Long,
+        val currency: String,
+        val channel: Short,
+        val channelOrderNo: String?,
+    )
+
+    fun findByOrderNo(orderNo: String): CallbackRow? =
+        dsl
+            .select(
+                RECHARGE_ORDER.ID,
+                RECHARGE_ORDER.CUSTOMER_ID,
+                RECHARGE_ORDER.DIAMONDS,
+                RECHARGE_ORDER.PRICE_CENTS,
+                RECHARGE_ORDER.CURRENCY,
+                RECHARGE_ORDER.CHANNEL,
+                RECHARGE_ORDER.CHANNEL_ORDER_NO,
+            ).from(RECHARGE_ORDER)
+            .where(RECHARGE_ORDER.ORDER_NO.eq(orderNo))
+            .fetchOne()
+            ?.let { CallbackRow(it.value1()!!, it.value2()!!, it.value3()!!, it.value4()!!, it.value5()!!, it.value6()!!, it.value7()) }
+
+    /**
+     * 渠道号回填/校验一体(spec §4.3-2):为空则写入、已有则须相同——单条条件 UPDATE 原子完成,
+     * 无"读 null → 回填 0 行仍放行"的并发窗口;1 行 = 回填或同值重写(无害),0 行 = 错配。
+     */
+    fun reconcileChannelOrderNo(
+        id: Long,
+        channelOrderNo: String,
+    ): Int =
+        dsl
+            .update(RECHARGE_ORDER)
+            .set(RECHARGE_ORDER.CHANNEL_ORDER_NO, channelOrderNo)
+            .where(
+                RECHARGE_ORDER.ID
+                    .eq(id)
+                    .and(RECHARGE_ORDER.CHANNEL_ORDER_NO.isNull.or(RECHARGE_ORDER.CHANNEL_ORDER_NO.eq(channelOrderNo))),
+            ).execute()
+
+    /** 宽 CAS(spec §4.3-4):CREATED|PROCESSING → 终态;0 行 = 已在终态(冲突由调用方 WARN + ack)。 */
+    fun casToTerminal(
+        id: Long,
+        target: Short,
+    ): Int =
+        dsl
+            .update(RECHARGE_ORDER)
+            .set(RECHARGE_ORDER.STATUS, target)
+            .where(RECHARGE_ORDER.ID.eq(id).and(RECHARGE_ORDER.STATUS.`in`(ORDER_CREATED, ORDER_PROCESSING)))
+            .execute()
 }
