@@ -4,6 +4,7 @@ import com.gabon.platform.security.AuthStoreUnavailableException
 import org.slf4j.LoggerFactory
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
+import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.ErrorResponse
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -22,6 +23,17 @@ class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleValidation(): ResponseEntity<ProblemDetail> =
         ResponseEntity.status(ProblemType.VALIDATION.status).body(ProblemType.VALIDATION.toProblemDetail())
+
+    /**
+     * 请求体不可读(缺字段/类型不符/坏 JSON,含 Jackson 3 FAIL_ON_NULL_FOR_PRIMITIVES 对非空
+     * 数值字段的反序列化失败):客户端输入错误 → 400,不得落 500 兜底污染错误告警。
+     * 本仓 advice 的 Exception 兜底会抢在框架默认 400 映射之前,故必须显式收口。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    fun handleUnreadable(e: HttpMessageNotReadableException): ResponseEntity<ProblemDetail> {
+        log.info("unreadable request body: {}", e.message)
+        return ResponseEntity.status(ProblemType.VALIDATION.status).body(ProblemType.VALIDATION.toProblemDetail())
+    }
 
     /**
      * Valkey 鉴权基础设施不可用 → fail-closed 503(spec §5.2)。

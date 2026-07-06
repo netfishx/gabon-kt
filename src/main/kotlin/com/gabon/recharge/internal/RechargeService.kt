@@ -5,6 +5,7 @@ import com.gabon.platform.web.ProblemException
 import com.gabon.platform.web.ProblemType
 import com.gabon.recharge.internal.channel.PaymentChannelRegistry
 import com.gabon.recharge.internal.channel.PaymentOrderSnapshot
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
 
@@ -25,6 +26,8 @@ class RechargeService(
     private val registry: PaymentChannelRegistry,
     private val clock: Clock,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     fun listPackages(): List<RechargePackageRepository.PackageRow> = packages.listActive()
 
     /**
@@ -43,7 +46,10 @@ class RechargeService(
         val orderNo = "R-${UuidV7.generate(clock)}"
         orders.insert(orderNo, customerId, packageId, pkg.diamonds, pkg.priceCents, pkg.currency, channelCode)
         val instruction = channel.createPayment(PaymentOrderSnapshot(orderNo, pkg.priceCents, pkg.currency))
-        orders.markProcessing(orderNo, instruction.channelOrderNo)
+        if (orders.markProcessing(orderNo, instruction.channelOrderNo) == 0) {
+            // 回调抢先到终态(渠道极快):终态优先不覆盖(spec §4.2);极罕见,留痕便于排查
+            log.warn("order {} reached terminal state before markProcessing", orderNo)
+        }
         return CreateOrderResult(orderNo, instruction.payload)
     }
 

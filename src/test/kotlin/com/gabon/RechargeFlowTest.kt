@@ -185,6 +185,61 @@ class RechargeFlowTest : AbstractIntegrationTest() {
             .andExpect(jsonPath("$.items.length()").value(0))
     }
 
+    @Test
+    fun `malformed order bodies are validation errors not 500`() {
+        val pkg = seedPackage(diamonds = 100, priceCents = 1_000)
+        // 缺字段:非空 Long 反序列化失败,必须 400 而非 500(Critical 回归钉子)
+        postOrder("""{"channel":1}""").andExpect(status().isBadRequest).andExpect(jsonPath("$.type").value("/problems/validation"))
+        // @Positive:负数/零
+        postOrder("""{"packageId":-1,"channel":1}""").andExpect(status().isBadRequest)
+        postOrder("""{"packageId":$pkg,"channel":0}""").andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `full page yields a next cursor and the second page drains`() {
+        val pkg = seedPackage(diamonds = 100, priceCents = 1_000)
+        repeat(21) { i -> seedOrderRow(customerId = 15L, orderNo = "R-PAGE-$i", packageId = pkg) }
+        val first =
+            mockMvc
+                .perform(get("/v1/recharge/orders").header(AUTH, "Bearer ${customerToken(15L)}"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.items.length()").value(20))
+                .andExpect(jsonPath("$.nextCursor").value(org.hamcrest.Matchers.notNullValue()))
+                .andReturn()
+        val cursor = objectMapper.readTree(first.response.contentAsString).path("nextCursor").asLong()
+        mockMvc
+            .perform(get("/v1/recharge/orders").header(AUTH, "Bearer ${customerToken(15L)}").param("cursor", cursor.toString()))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.nextCursor").value(org.hamcrest.Matchers.nullValue()))
+    }
+
+    private fun postOrder(body: String) =
+        mockMvc.perform(
+            post("/v1/recharge/orders")
+                .header(AUTH, "Bearer ${customerToken()}")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body),
+        )
+
+    private fun seedOrderRow(
+        customerId: Long,
+        orderNo: String,
+        packageId: Long,
+    ): Long =
+        dsl
+            .insertInto(RECHARGE_ORDER)
+            .set(RECHARGE_ORDER.ORDER_NO, orderNo)
+            .set(RECHARGE_ORDER.CUSTOMER_ID, customerId)
+            .set(RECHARGE_ORDER.PACKAGE_ID, packageId)
+            .set(RECHARGE_ORDER.DIAMONDS, 100L)
+            .set(RECHARGE_ORDER.PRICE_CENTS, 1_000L)
+            .set(RECHARGE_ORDER.CURRENCY, "CNY")
+            .set(RECHARGE_ORDER.CHANNEL, 1)
+            .returningResult(RECHARGE_ORDER.ID)
+            .fetchOne()!!
+            .value1()!!
+
     private fun customerToken(customerId: Long = 1L): String = codec.issue(customerId, PrincipalType.CUSTOMER, UUID.randomUUID())
 
     private fun adminToken(): String = codec.issue(2L, PrincipalType.ADMIN, UUID.randomUUID())
