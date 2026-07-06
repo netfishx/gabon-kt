@@ -11,6 +11,7 @@ import com.gabon.wallet.api.WalletLedgerApi
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
@@ -70,8 +71,10 @@ class RechargeService(
      * 回调处理(spec §4.3,顺序钉死):验签/解析(SPI 抛 401/400,不落 inbox)→ 渠道归属 → 金额(仅 Success)
      * → 渠道号回填/校验 → inbox 去重 → 宽 CAS → 入账。全体同一事务:失败整体回滚(含 inbox 行),
      * 渠道重试可完整重放。重复/错配/终态冲突一律正常返回(2xx ack,渠道停止重试)。
+     * isolation 显式 pin READ_COMMITTED(同 TokenService.refresh 先例):reconcile/casToTerminal 的
+     * 败方靠 EvalPlanQual 重查拿 0 行,该链条仅 READ COMMITTED 成立——把隐式默认 pin 成显式契约。
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     fun handleCallback(
         channelCode: Short,
         rawBody: ByteArray,
@@ -107,7 +110,10 @@ class RechargeService(
         }
         if (!inbox.tryRecord(sourceOf(channelCode), cb.externalId)) return // 重复回调短路 ack(spec §4.3-3)
         if (orders.casToTerminal(order.id, ORDER_SUCCESS) == 1) {
-            ledger.creditRecharge(cb.orderNo, order.customerId, order.diamonds)
+            if (!ledger.creditRecharge(cb.orderNo, order.customerId, order.diamonds)) {
+                // 理论不可达:宽 CAS 保证每单至多走到此一次;若触发说明状态机被绕过,必须可见
+                anomaly("credit-replayed", "orderNo=${cb.orderNo} ledger idempotency hit under fresh terminal cas")
+            }
         } else {
             conflict("success callback on terminal order ${cb.orderNo}") // 不翻案(spec §4.3 定案)
         }

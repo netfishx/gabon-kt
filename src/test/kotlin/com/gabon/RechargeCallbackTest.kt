@@ -108,6 +108,19 @@ class RechargeCallbackTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `second success with a different external id conflicts without double crediting`() {
+        // 同订单两个不同 externalId 的 SUCCESS:inbox 不去重(键不同),全靠宽 CAS 兜底——固化这层语义
+        val o = seedOrder(customerId = 30L, diamonds = 200, priceCents = 2_000, status = ORDER_PROCESSING, channelOrderNo = "F-30")
+        postCallback(success(o, externalId = "E-30a")).andExpect(status().isOk)
+        postCallback(success(o, externalId = "E-30b")).andExpect(status().isOk)
+        assertThat(statusOf(o.id)).isEqualTo(ORDER_SUCCESS)
+        assertThat(wallet.balanceOf(30L)).isEqualTo(200)
+        assertThat(dsl.fetchCount(LEDGER_TXN)).isEqualTo(1)
+        assertThat(dsl.fetchCount(INBOX)).isEqualTo(2) // 两条都记了,去重靠 CAS 层
+        LedgerInvariants.assertHolds(dsl)
+    }
+
+    @Test
     fun `bad signature is rejected and nothing is recorded`() {
         val o = seedOrder(customerId = 26L, diamonds = 100, priceCents = 1_000, status = ORDER_PROCESSING, channelOrderNo = "F-26")
         mockMvc
