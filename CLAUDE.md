@@ -80,7 +80,8 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 
 ```
 docs/architecture-redesign.md   ← 权威设计文档,先读
-docs/superpowers/specs/          设计 spec(模块边界+身份域等)
+docs/agents/                     agent skills 配置(issue tracker/triage 标签/domain docs)
+docs/superpowers/                旧 superpowers 流程档案(spec+plan,已全部完结,只读)
 src/main/kotlin/com/gabon/       ← 包根 com.gabon(GabonApplication 为入口)
   platform/   共享内核(outbox、security、web;人人可依,不得反向依赖业务上下文)
   wallet/     钱包与账本(internal/ledger:双分录、幂等、守卫、AccountKind forced type)
