@@ -46,12 +46,12 @@
     {
       "id": 26,
       "subject": "Batch3-Task 6: admin TOTP 鉴权 + 边界收尾",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** admin login(启用后强制 TOTP)/enroll/confirm + CAS step;删 marker、根包断言、C7 增补、CLAUDE.md/WalletProps 收尾。\n\n**Files:**\n- Create: identity/internal/{AdminUserRepository,TotpVerifier,AdminAuthService}.kt、web/AdminAuthController.kt + AdminTotpFlowTest\n- Delete: IdentityInternalMarker.kt;Modify: ModuleBoundaryTest/架构文档 C7/CLAUDE.md/WalletProps\n\n**Acceptance Criteria:**\n- 同 code 二次 401(CAS);step 单调;customer 访问 enroll 403;otpauth URI label percent-encoded + secret 去 padding(特殊字符用户名测试);根包探针红→绿;check 绿 + 最终测试数\n\n**Verify:** ./gradlew check → BUILD SUCCESSFUL\n\n```json:metadata\n{\"modelTier\": \"frontier\", \"files\": [\"src/main/kotlin/com/gabon/identity/internal/\", \"src/test/kotlin/com/gabon/ModuleBoundaryTest.kt\", \"docs/architecture-redesign.md\", \"CLAUDE.md\"], \"verifyCommand\": \"./gradlew check\", \"acceptanceCriteria\": [\"totp mandatory once enrolled\", \"cas burns each step\", \"otpauth uri encoded and unpadded\", \"root package assertion with probe\", \"C7 amendment landed\", \"check green\"]}\n```",
       "blockedBy": [
         25
       ]
     }
   ],
-  "lastUpdated": "2026-07-04T02:00:00+08:00"
+  "lastUpdated": "2026-07-09T00:00:00+08:00"
 }
