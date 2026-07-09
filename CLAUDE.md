@@ -97,3 +97,17 @@ config/detekt/detekt.yml         detekt 配置
 
 - 与用户交流用**中文**(代码/标识符/命令/包名保留英文)。
 - 写代码前先给【方案 + 改动文件 + 验证命令】等确认;>3 文件先拆分;改完必须实际跑 `./gradlew check` 再说完成。
+
+## Agent skills
+
+### Issue tracker
+
+工单在 GitHub Issues(netfishx/gabon-kt,`gh` CLI 操作);外部 PR 也作为需求入口进 triage。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个规范标签用默认英文名(needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix)。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+Single-context:仓库根 `CONTEXT.md` + `docs/adr/`;既往架构决策仍以 `docs/architecture-redesign.md` 为权威,`docs/adr/` 只收其后的新决策。见 `docs/agents/domain.md`。
