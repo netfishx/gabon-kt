@@ -1,5 +1,11 @@
 # gabon-next
 
+> **⚠️ 本仓已封存（2026-07-16，只读归档）。**
+> Kotlin 重写于正式开发推进至充值域批 2 后中止，经验已沉淀为跨语言传承包
+> **[gabon-knowledge](https://github.com/netfishx/gabon-knowledge)**（架构约束 arch-c-001…026、JVM 坑表、双分录模型并排记录，证据锚 `c1675c3`，交棒基线 `v1.0` tag）；后续重写走 Rust，以传承包为起点。
+> 资产去向见[验收覆盖矩阵](https://github.com/netfishx/gabon-knowledge/blob/main/coverage-matrix.md)；封存执行见[终结票](https://github.com/netfishx/gabon-knowledge/issues/11)。
+> 下文「新版后端主仓/正式开发」为封存前旧文，仅作史料保留。
+
 gabon 平台**新版后端主仓**(Kotlin/JVM + Spring Boot + jOOQ 模块化单体)。
 技术栈已通过 spike 验证(见 `docs/architecture-redesign.md` C11),现进入正式开发。
 **开发规则见 `CLAUDE.md`;架构设计见 `docs/architecture-redesign.md`(先读再写)。**
